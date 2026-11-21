@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.daniel.carscanner.obd.DtcDecoder
@@ -42,6 +43,10 @@ fun CodesScreen(vm: ScannerViewModel) {
     var confirmClear by remember { mutableStateOf(false) }
     var lookup by remember { mutableStateOf<String?>(null) }
 
+    val allClear = read && stored.isEmpty() && pending.isEmpty() && permanent.isEmpty() && mil != true
+    // Nothing to erase: don't offer a clear that would only reset emissions readiness.
+    val canClear = !(read && stored.isEmpty() && pending.isEmpty() && mil != true)
+
     // Read codes automatically the first time you open this screen.
     LaunchedEffect(Unit) { if (!read) vm.readCodes() }
 
@@ -61,12 +66,38 @@ fun CodesScreen(vm: ScannerViewModel) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 PrimaryButton(if (busy != null) "Reading…" else "Read codes", enabled = busy == null, modifier = Modifier.weight(1f), onClick = vm::readCodes)
-                SecondaryButton("Clear codes", enabled = busy == null, modifier = Modifier.weight(1f)) { confirmClear = true }
+                SecondaryButton("Clear codes", enabled = busy == null && canClear, modifier = Modifier.weight(1f)) { confirmClear = true }
             }
         }
+        // Reading for the first time
+        if (!read && busy != null) item {
+            Row(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Ui.Accent)
+                Spacer(Modifier.width(12.dp))
+                Text("Reading codes from the car…", color = Ui.Sub)
+            }
+        }
+
         // Codes that came back after being cleared
         items(returned, key = { "back" + it.placeKey + it.code }) { r ->
             ReturnedBanner(r, onOpen = { lookup = r.code }, onDismiss = { vm.dismissReturned(r) })
+        }
+
+        // Nothing wrong: say so clearly instead of three "None"s
+        if (allClear) item {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(16.dp)).background(Ui.Card).padding(18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StatusDot(Ui.Good, 12)
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text("No trouble codes", style = MaterialTheme.typography.titleMedium)
+                    Text("The engine computer has nothing stored, pending or permanent.", color = Ui.Sub,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
 
         // Snapshot from the moment the first code was set
@@ -85,9 +116,11 @@ fun CodesScreen(vm: ScannerViewModel) {
                 }
             }
         }
-        codeSection("Stored", "Confirmed faults. These turn on the check engine light.", stored, read) { lookup = it }
-        codeSection("Pending", "Seen once. They become stored if they happen again.", pending, read) { lookup = it }
-        codeSection("Permanent", "Only the car can erase these, after it confirms the repair while driving.", permanent, read) { lookup = it }
+        if (!allClear) {
+            codeSection("Stored", "Confirmed faults. These turn on the check engine light.", stored, read, Ui.Bad) { lookup = it }
+            codeSection("Pending", "Seen once. They become stored if they happen again.", pending, read, Ui.Watch) { lookup = it }
+            codeSection("Permanent", "Only the car can erase these, after it confirms the repair while driving.", permanent, read, Ui.Sub) { lookup = it }
+        }
 
         // Emissions inspection readiness
         readiness?.let { r ->
@@ -132,7 +165,7 @@ fun CodesScreen(vm: ScannerViewModel) {
 }
 
 /** A heading plus the codes under it. */
-private fun LazyListScope.codeSection(title: String, hint: String, codes: List<String>, read: Boolean, onLookup: (String) -> Unit) {
+private fun LazyListScope.codeSection(title: String, hint: String, codes: List<String>, read: Boolean, color: Color, onLookup: (String) -> Unit) {
     item {
         Column(Modifier.padding(top = 16.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
@@ -140,18 +173,18 @@ private fun LazyListScope.codeSection(title: String, hint: String, codes: List<S
         }
     }
     if (read && codes.isEmpty()) item { Text("None", color = Ui.Sub) }
-    items(codes, key = { title + it }) { code -> CodeCard(code) { onLookup(code) } }
+    items(codes, key = { title + it }) { code -> CodeCard(code, color) { onLookup(code) } }
 }
 
 /** One code with its description and a Look up button. */
 @Composable
-private fun CodeCard(code: String, onLookup: () -> Unit) {
+private fun CodeCard(code: String, color: Color, onLookup: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Ui.Card).padding(18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(code, style = MaterialTheme.typography.titleLarge, color = Ui.Watch)
+            Text(code, style = MaterialTheme.typography.titleLarge, color = color)
             Text(DtcDecoder.describe(code), color = Ui.Sub)
         }
         TextButton(onClick = onLookup) { Text("Look up", color = Ui.Accent) }
