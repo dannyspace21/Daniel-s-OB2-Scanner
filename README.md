@@ -53,7 +53,7 @@ The code lives directly in this repository now, so edit and commit files here ra
 
 ### Signing key
 
-Android only installs an update over the app if both builds were signed with the same key. That key is a secret, so it is **never** stored in the repository. GitHub Actions reads it from repository secrets (**Settings > Secrets and variables > Actions > New repository secret**):
+Android only installs an update over the app if both builds were signed with the same key. Keep using the key the app on your phone was installed with (`daniels-scanner.keystore`, alias `daniels`), or updates stop installing. That key is a secret, so it is **never** stored in the repository. GitHub Actions reads it from repository secrets (**Settings > Secrets and variables > Actions > New repository secret**):
 
 | Secret | Value |
 |---|---|
@@ -61,6 +61,8 @@ Android only installs an update over the app if both builds were signed with the
 | `SIGNING_STORE_PASSWORD` | The keystore password |
 | `SIGNING_KEY_ALIAS` | Optional, defaults to `daniels` |
 | `SIGNING_KEY_PASSWORD` | Optional, defaults to the keystore password |
+
+Every build checks that the APK is signed with that exact key (SHA-256 fingerprint `AF:7E:29:65:…:C6:B3`, set in `.github/workflows/build.yml`). If the secrets are missing or wrong, the build fails with a clear message instead of giving you an APK that won't install over your app.
 
 For local builds, put the same names in a `keystore.properties` file next to `settings.gradle.kts` (it's git-ignored), with `SIGNING_KEYSTORE_PATH` pointing at the keystore. Without a key, builds are signed with Android's standard debug key.
 

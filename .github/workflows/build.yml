@@ -53,6 +53,23 @@ jobs:
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: gradle assembleDebug --no-daemon
 
+      # Your phone only accepts an update signed with the same key as the installed app.
+      # This fails the build if the APK was signed with anything else, so you never
+      # download an APK that won't install over your current one.
+      - name: Check the APK can update the installed app
+        env:
+          EXPECTED_SHA256: AF7E2965122C6000E2A9491A35C2A68E51367C4A26F0F664843FA8B79938C6B3
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          ACTUAL=$("$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk \
+            | grep -m1 'certificate SHA-256 digest' | awk '{print toupper($NF)}')
+          echo "APK signed with: $ACTUAL"
+          if [ "$ACTUAL" != "$EXPECTED_SHA256" ]; then
+            echo "::error::This APK is NOT signed with your app's key, so it can't update the app on your phone. Add the SIGNING_KEYSTORE_BASE64 and SIGNING_STORE_PASSWORD repository secrets (see README > Signing key)."
+            exit 1
+          fi
+          echo "Signed with your key: installs as an update."
+
       - name: Remove signing key
         if: always()
         run: rm -f "$RUNNER_TEMP/release.keystore"
