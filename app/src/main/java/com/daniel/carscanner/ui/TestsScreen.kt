@@ -1,0 +1,162 @@
+package com.daniel.carscanner.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.daniel.carscanner.obd.ActiveTest
+
+/*
+ * WHAT THIS FILE DOES
+ * Your list of active tests (fan on, fuel pump on, etc.).
+ *  - "Add test" opens a form where you enter the commands for your car.
+ *  - "Run" asks a safety question first, then runs the test with a time limit.
+ *  - "Stop now" ends it early. Stop commands are always sent, even if you
+ *    leave the screen or the module refuses the start command.
+ */
+
+@Composable
+fun TestsScreen(vm: ScannerViewModel) {
+    val tests by vm.tests.collectAsStateWithLifecycle()
+    val running by vm.runningTest.collectAsStateWithLifecycle()
+    val status by vm.testStatus.collectAsStateWithLifecycle()
+    var editing by remember { mutableStateOf<ActiveTest?>(null) }
+    var creating by remember { mutableStateOf(false) }
+    var confirmRun by remember { mutableStateOf<ActiveTest?>(null) }
+
+    // Leaving the screen stops any running test.
+    DisposableEffect(Unit) { onDispose { vm.stopTest() } }
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Text(
+                "Active tests switch real parts on so you can prove they work. Commands differ by car and module, " +
+                    "so add only ones confirmed for your vehicle.",
+                color = Ui.Sub,
+            )
+            Spacer(Modifier.height(14.dp))
+            PrimaryButton("Add test", modifier = Modifier.fillMaxWidth()) { creating = true }
+        }
+        if (status.isNotEmpty()) item {
+            val bad = status.startsWith("Rejected") || status.startsWith("Error") || status.startsWith("No reply")
+            Text("Last result: $status", color = if (bad) Ui.Bad else Ui.Good, modifier = Modifier.padding(top = 6.dp))
+        }
+        if (tests.isEmpty()) item { Text("No tests yet.", color = Ui.Sub, modifier = Modifier.padding(top = 10.dp)) }
+        items(tests, key = { it.id }) { t ->
+            val isRunning = running == t.id
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                    .background(if (isRunning) Ui.Raised else Ui.Card).padding(18.dp),
+            ) {
+                Text(t.name, style = MaterialTheme.typography.titleMedium)
+                if (t.notes.isNotBlank()) Text(t.notes, color = Ui.Sub)
+                Text(
+                    "Module ${t.header.ifBlank { "default" }}, start ${t.startCommands.joinToString(" ")}, " +
+                        "stop ${t.stopCommands.joinToString(" ").ifBlank { "none" }}, limit ${t.maxSeconds} s",
+                    fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, color = Ui.Sub,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (isRunning) {
+                        SecondaryButton("Stop now", color = Ui.Bad, modifier = Modifier.weight(1f), onClick = vm::stopTest)
+                    } else {
+                        PrimaryButton("Run", enabled = running == null, modifier = Modifier.weight(1f)) { confirmRun = t }
+                        SecondaryButton("Edit", enabled = running == null, modifier = Modifier.weight(1f)) { editing = t }
+                        TextButton(onClick = { vm.deleteTest(t.id) }, enabled = running == null) { Text("Delete", color = Ui.Sub) }
+                    }
+                }
+            }
+        }
+    }
+
+    // Safety confirmation before anything moves.
+    confirmRun?.let { t ->
+        AlertDialog(
+            onDismissRequest = { confirmRun = null },
+            containerColor = Ui.Card,
+            title = { Text("Run \"${t.name}\"?") },
+            text = {
+                Text(
+                    "Car in Park with the parking brake set. Hands, hair and tools clear of the fan and belts. " +
+                        "Engine off and ignition on, unless the test needs the engine running. " +
+                        "It stops by itself after ${t.maxSeconds} seconds."
+                )
+            },
+            confirmButton = { TextButton(onClick = { confirmRun = null; vm.runTest(t) }) { Text("Run test") } },
+            dismissButton = { TextButton(onClick = { confirmRun = null }) { Text("Cancel") } },
+        )
+    }
+
+    if (creating || editing != null) {
+        TestEditor(
+            initial = editing,
+            onDismiss = { creating = false; editing = null },
+            onSave = { vm.saveTest(it); creating = false; editing = null },
+        )
+    }
+}
+
+/** The add/edit form. "Save test" is only enabled once a name and start command are filled in. */
+@Composable
+private fun TestEditor(initial: ActiveTest?, onDismiss: () -> Unit, onSave: (ActiveTest) -> Unit) {
+    var name by remember { mutableStateOf(initial?.name ?: "") }
+    var notes by remember { mutableStateOf(initial?.notes ?: "") }
+    var header by remember { mutableStateOf(initial?.header ?: "7E0") }
+    var start by remember { mutableStateOf(initial?.startCommands?.joinToString("\n") ?: "") }
+    var stop by remember { mutableStateOf(initial?.stopCommands?.joinToString("\n") ?: "") }
+    var keepAlive by remember { mutableStateOf(initial?.keepAlive ?: "3E00") }
+    var seconds by remember { mutableStateOf((initial?.maxSeconds ?: 10).toString()) }
+
+    fun lines(s: String) = s.lines().map { it.trim() }.filter { it.isNotEmpty() }
+    val valid = name.isNotBlank() && lines(start).isNotEmpty() && (seconds.toIntOrNull() ?: 0) in 1..120
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Ui.Card,
+        title = { Text(if (initial == null) "Add test" else "Edit test") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text("Name, e.g. Cooling fan on") }, singleLine = true)
+                OutlinedTextField(header, { header = it.uppercase() }, label = { Text("Module address (7E0 = engine)") }, singleLine = true)
+                OutlinedTextField(start, { start = it.uppercase() }, label = { Text("Start commands, one per line") }, minLines = 2)
+                OutlinedTextField(stop, { stop = it.uppercase() }, label = { Text("Stop commands, one per line") }, minLines = 2)
+                OutlinedTextField(keepAlive, { keepAlive = it.uppercase() }, label = { Text("Keep-alive (blank for none)") }, singleLine = true)
+                OutlinedTextField(
+                    seconds, { seconds = it.filter(Char::isDigit) },
+                    label = { Text("Time limit, seconds (1–120)") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                OutlinedTextField(notes, { notes = it }, label = { Text("Notes, e.g. where the command came from") })
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = valid, onClick = {
+                val base = initial ?: ActiveTest(name = name, startCommands = emptyList(), stopCommands = emptyList())
+                onSave(
+                    base.copy(
+                        name = name.trim(), notes = notes.trim(), header = header.trim(),
+                        startCommands = lines(start), stopCommands = lines(stop),
+                        keepAlive = keepAlive.trim(), maxSeconds = seconds.toInt(),
+                    )
+                )
+            }) { Text("Save test") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
