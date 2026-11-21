@@ -80,7 +80,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-    implementation("androidx.work:work-runtime-ktx:2.9.1")   // daily background recall check
+    implementation("androidx.work:work-runtime-ktx:2.12.0")   // daily background recall check
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")   // real JSON for unit tests (Android's is a stub there)
