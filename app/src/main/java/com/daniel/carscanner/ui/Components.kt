@@ -117,13 +117,15 @@ fun NavRow(icon: ImageVector, title: String, subtitle: String? = null, dot: Colo
 
 /** Round icon button with a label underneath. */
 @Composable
-fun RoundAction(icon: ImageVector, label: String, enabled: Boolean = true, onClick: () -> Unit) {
+fun RoundAction(icon: ImageVector, label: String, enabled: Boolean = true, onDisabledClick: (() -> Unit)? = null, onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
     val tap = rememberTapFeedback()
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp)) {
         Box(
             Modifier.size(60.dp).scale(pressedScale(source, 0.9f)).clip(CircleShape).background(Ui.Raised)
-                .clickable(enabled = enabled, interactionSource = source, indication = LocalIndication.current, role = Role.Button) { tap(); onClick() },
+                .clickable(enabled = enabled || onDisabledClick != null, interactionSource = source, indication = LocalIndication.current, role = Role.Button) {
+                    tap(); if (enabled) onClick() else onDisabledClick?.invoke()
+                },
             contentAlignment = Alignment.Center,
         ) {
             Icon(icon, contentDescription = label, tint = if (enabled) Ui.Text else Ui.Sub, modifier = Modifier.size(26.dp))
@@ -131,6 +133,15 @@ fun RoundAction(icon: ImageVector, label: String, enabled: Boolean = true, onCli
         Spacer(Modifier.height(8.dp))
         Text(label, style = MaterialTheme.typography.labelMedium, color = if (enabled) Ui.Text else Ui.Sub)
     }
+}
+
+/** Small grey heading above a group of rows on Home. */
+@Composable
+fun SectionHeader(text: String) {
+    Text(
+        text.uppercase(), style = MaterialTheme.typography.labelMedium, color = Ui.Sub,
+        modifier = Modifier.padding(start = 8.dp, top = 18.dp, bottom = 4.dp),
+    )
 }
 
 @Composable

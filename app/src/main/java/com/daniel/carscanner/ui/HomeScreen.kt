@@ -89,7 +89,14 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                         StatusDot(if (connected) Ui.Good else Ui.Sub, 8)
                         Spacer(Modifier.width(8.dp))
-                        Text(status, style = MaterialTheme.typography.bodyMedium, color = Ui.Sub)
+                        Text(status, style = MaterialTheme.typography.bodyMedium, color = Ui.Sub, modifier = Modifier.weight(1f, fill = false))
+                        // One tap to connect, right where you see "Not connected"
+                        if (conn is Conn.Disconnected || conn is Conn.Failed) {
+                            Spacer(Modifier.width(10.dp))
+                            Text("Connect", color = Color.White, style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(Ui.Accent)
+                                    .clickable { go(Screen.Connect) }.padding(horizontal = 12.dp, vertical = 5.dp))
+                        }
                     }
                 }
                 TorchButton()
@@ -171,14 +178,17 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
         // Quick actions
         item {
             Row(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                RoundAction(Icons.Filled.HealthAndSafety, "Health", connected) { go(Screen.Health) }
-                RoundAction(Icons.Filled.ReportProblem, "Codes", connected) { go(Screen.Codes) }
-                RoundAction(Icons.Filled.Memory, "Modules", connected) { go(Screen.Modules) }
-                RoundAction(Icons.Filled.Speed, "Live", connected) { go(Screen.Live) }
+                // Greyed out until connected; tapping one then takes you to Connect instead of doing nothing.
+                val toConnect = { go(Screen.Connect) }
+                RoundAction(Icons.Filled.HealthAndSafety, "Health", connected, toConnect) { go(Screen.Health) }
+                RoundAction(Icons.Filled.ReportProblem, "Codes", connected, toConnect) { go(Screen.Codes) }
+                RoundAction(Icons.Filled.Memory, "Modules", connected, toConnect) { go(Screen.Modules) }
+                RoundAction(Icons.Filled.Speed, "Live", connected, toConnect) { go(Screen.Live) }
             }
         }
 
         // One row per system, showing its worst finding
+        item { SectionHeader("Systems") }
         items(HealthCheck.systems) { system ->
             val worst = findings.filter { it.system == system }.maxByOrNull { it.level.severity }
             NavRow(
@@ -201,7 +211,7 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
             ) { go(Screen.Modules) }
         }
 
-        item { HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Ui.Line) }
+        item { SectionHeader("Your car") }
         item { NavRow(Icons.Filled.Garage, "Garage", if (garage.isEmpty()) "Your cars appear here" else "${garage.size} car${if (garage.size > 1) "s" else ""}") { go(Screen.Garage) } }
         item {
             NavRow(Icons.Filled.DirectionsCar, "Vehicle & recalls",
@@ -214,6 +224,7 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
         }
         item { NavRow(Icons.Filled.EventNote, "Maintenance", "Oil changes, filters and fluids") { go(Screen.Maintenance) } }
         item { NavRow(Icons.Filled.History, "Scan history", "Past results and shareable reports") { go(Screen.History) } }
+        item { SectionHeader("Tools") }
         item { NavRow(Icons.Filled.Speed, "Live data", "Gauges with normal ranges") { go(Screen.Live) } }
         item { NavRow(Icons.Filled.Sensors, "Body data", "Set up live doors, lights and windows") { go(Screen.BodyData) } }
         item { NavRow(Icons.Filled.Build, "Active tests", "Switch parts on to prove they work") { go(Screen.Tests) } }
@@ -222,6 +233,7 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
             NavRow(Icons.Filled.Bluetooth, "Adapter", (conn as? Conn.Connected)?.name ?: "Not connected",
                 dot = if (connected) Ui.Good else null) { go(Screen.Connect) }
         }
+        item { SectionHeader("Settings") }
         item { NavRow(Icons.Filled.Info, "About & settings", "Version, appearance, privacy") { go(Screen.About) } }
     }
 }
