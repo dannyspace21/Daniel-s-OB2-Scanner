@@ -64,6 +64,29 @@ object Safety {
         return Hex.isHex(h) && h.length in setOf(3, 6, 8)
     }
 
+    /**
+     * What's wrong with an active test, in plain words, or null if it's fine.
+     * Shown live under the form, so you can fix it before saving.
+     */
+    fun testProblem(header: String, commands: List<String>, seconds: Int): String? = when {
+        header.isNotBlank() && !isValidHeader(header) -> "Module address must be 3, 6 or 8 hex digits, like 7E0."
+        commands.any { !isSendable(it) } -> "Use one command per line, with only letters, numbers and spaces."
+        seconds !in 1..120 -> "Time limit must be between 1 and 120 seconds."
+        else -> null
+    }
+
+    /**
+     * What's wrong with a request that repeats several times a second (body signals, Watch),
+     * or null if it's fine. These may only read, never change anything.
+     */
+    fun readRequestProblem(header: String, command: String): String? = when {
+        header.isNotBlank() && !isValidHeader(header) -> "Module address must be 3, 6 or 8 hex digits, like 750."
+        command.isBlank() -> "Enter a request, like 2101 or 22F190."
+        !isSendable(command) || !Hex.isHex(command.filterNot { it.isWhitespace() }) || classify(command) != Risk.Normal ->
+            "Only read requests work here (like 21xx or 22xxxx), because it repeats several times a second."
+        else -> null
+    }
+
     fun classify(cmd: String): Risk {
         if (cmd.any { it.isISOControl() }) return Risk.Dangerous   // hidden line breaks: never allowed through
         val c = cmd.filterNot { it.isWhitespace() }.uppercase()

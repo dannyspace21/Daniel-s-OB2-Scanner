@@ -17,6 +17,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.daniel.carscanner.obd.ActiveTest
+import com.daniel.carscanner.obd.Risk
+import com.daniel.carscanner.obd.Safety
 import com.daniel.carscanner.obd.Visuals
 
 /*
@@ -141,7 +143,11 @@ private fun TestEditor(initial: ActiveTest?, initialVisual: String?, onDismiss: 
     var visual by remember { mutableStateOf(initial?.visual ?: initialVisual ?: "") }
 
     fun lines(s: String) = s.lines().map { it.trim() }.filter { it.isNotEmpty() }
-    val valid = name.isNotBlank() && lines(start).isNotEmpty() && (seconds.toIntOrNull() ?: 0) in 1..120
+    val allCommands = lines(start) + lines(stop) + listOf(keepAlive.trim()).filter { it.isNotEmpty() }
+    // Checked as you type, so problems show up before you tap Save.
+    val problem = Safety.testProblem(header.trim(), allCommands, seconds.toIntOrNull() ?: 0)
+    val needsExpert = allCommands.any { Safety.classify(it) == Risk.Dangerous }
+    val valid = name.isNotBlank() && lines(start).isNotEmpty() && problem == null
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -160,6 +166,11 @@ private fun TestEditor(initial: ActiveTest?, initialVisual: String?, onDismiss: 
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
                 OutlinedTextField(notes, { notes = it }, label = { Text("Notes, e.g. where the command came from") })
+                when {
+                    problem != null -> Text(problem, color = Ui.Bad, style = MaterialTheme.typography.bodySmall)
+                    needsExpert -> Text("Contains a command that can reset or reprogram a module. It will only run with Expert mode on.",
+                        color = Ui.Watch, style = MaterialTheme.typography.bodySmall)
+                }
                 // Pick the animation the car drawing shows while the test runs
                 Text("Shows on car", color = Ui.Sub, style = MaterialTheme.typography.labelMedium)
                 Box {

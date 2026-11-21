@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.daniel.carscanner.obd.BodySignal
 import com.daniel.carscanner.obd.Element
+import com.daniel.carscanner.obd.Safety
 
 /*
  * WHAT THIS FILE DOES
@@ -153,9 +154,13 @@ private fun SignalEditor(vm: ScannerViewModel, start: BodySignal?, vin: String, 
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters))
             }
 
+            // Checked as you type: these requests repeat several times a second, so they may only read.
+            val requestProblem = if (command.isBlank()) null else Safety.readRequestProblem(header.trim(), command)
+            requestProblem?.let { Text(it, color = Ui.Bad, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp)) }
+
             // Watch tool
             Spacer(Modifier.height(12.dp))
-            if (!watching) PrimaryButton("Watch", enabled = command.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+            if (!watching) PrimaryButton("Watch", enabled = command.isNotBlank() && requestProblem == null, modifier = Modifier.fillMaxWidth()) {
                 watching = true; vm.startWatch(header, command)
             } else SecondaryButton("Stop watching", modifier = Modifier.fillMaxWidth()) { watching = false; vm.stopWatch() }
             watchError?.let { Text(it, color = Ui.Watch, modifier = Modifier.padding(top = 6.dp)) }
@@ -215,7 +220,7 @@ private fun SignalEditor(vm: ScannerViewModel, start: BodySignal?, vin: String, 
 
             // Save / delete
             Spacer(Modifier.height(16.dp))
-            PrimaryButton("Save signal", enabled = command.isNotBlank() && vin.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+            PrimaryButton("Save signal", enabled = command.isNotBlank() && vin.isNotBlank() && requestProblem == null, modifier = Modifier.fillMaxWidth()) {
                 val isTurn = element == Element.TurnL || element == Element.TurnR || element == Element.Hazard
                 vm.saveSignal(
                     (start ?: BodySignal(vin = vin, element = element, header = header, command = command, byteIndex = byteIndex, bit = bit))

@@ -479,14 +479,8 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     fun stopTest() { testJob?.cancel() }
 
     /** Why a test can't be saved or run (bad module address, hidden characters), or null if it's fine. */
-    private fun problemWith(t: ActiveTest): String? = when {
-        t.header.isNotBlank() && !Safety.isValidHeader(t.header) ->
-            "The module address must be 3, 6 or 8 hex digits, like 7E0."
-        (t.startCommands + t.stopCommands + t.keepAlive).filter { it.isNotBlank() }.any { !Safety.isSendable(it) } ->
-            "A command contains characters the adapter can't take. Use one command per line."
-        t.maxSeconds !in 1..120 -> "The time limit must be between 1 and 120 seconds."
-        else -> null
-    }
+    private fun problemWith(t: ActiveTest): String? =
+        Safety.testProblem(t.header, (t.startCommands + t.stopCommands + t.keepAlive).filter { it.isNotBlank() }, t.maxSeconds)
 
     // ---------- Health check ----------
 
@@ -890,8 +884,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** True for a valid module address plus a request that only reads (safe to repeat forever). */
     private fun isReadRequest(header: String, command: String): Boolean =
-        (header.isBlank() || Safety.isValidHeader(header)) &&
-            Safety.isSendable(command) && Safety.classify(command) == Risk.Normal
+        Safety.readRequestProblem(header, command) == null
 
     fun deleteSignal(id: String) { allSignals.update { list -> list.filter { it.id != id }.also(signalStore::save) } }
 

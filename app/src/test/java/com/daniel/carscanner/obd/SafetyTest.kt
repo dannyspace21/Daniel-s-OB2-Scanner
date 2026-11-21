@@ -52,4 +52,21 @@ class SafetyTest {
         listOf("7E0", "7e0", "750", "DA10F1", "18DA10F1", "18 DA 10 F1").forEach { assertTrue(it, Safety.isValidHeader(it)) }
         listOf("", "7E", "7E0\rATPP", "ZZZ", "7E00").forEach { assertFalse(it, Safety.isValidHeader(it)) }
     }
+
+    @Test fun repeatingRequestsMustOnlyRead() {
+        assertEquals(null, Safety.readRequestProblem("750", "2101"))
+        assertEquals(null, Safety.readRequestProblem("", "22 F1 90"))
+        listOf("04", "1101", "2F010303", "ATZ", "STPX", "0100\r1101").forEach {
+            assertTrue(it, Safety.readRequestProblem("750", it) != null)
+        }
+        assertTrue(Safety.readRequestProblem("75", "2101") != null)
+    }
+
+    @Test fun testEditorChecks() {
+        assertEquals(null, Safety.testProblem("7E0", listOf("3003FF", "3000"), 10))
+        assertTrue(Safety.testProblem("7E", listOf("3003FF"), 10) != null)
+        assertTrue(Safety.testProblem("7E0", listOf("3003FF\r1101"), 10) != null)
+        assertTrue(Safety.testProblem("7E0", listOf("3003FF"), 0) != null)
+        assertTrue(Safety.testProblem("7E0", listOf("3003FF"), 121) != null)
+    }
 }
