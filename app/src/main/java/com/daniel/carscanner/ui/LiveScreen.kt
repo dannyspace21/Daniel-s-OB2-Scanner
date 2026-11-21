@@ -51,8 +51,11 @@ fun LiveScreen(vm: ScannerViewModel) {
     var info by remember { mutableStateOf<Pid?>(null) }
     var related by remember { mutableStateOf<Pid?>(null) }
 
-    // Stop reading when you leave this screen.
-    DisposableEffect(Unit) { onDispose { vm.stopPolling() } }
+    // Start reading as soon as the screen opens (no extra tap), and stop when you leave.
+    DisposableEffect(Unit) {
+        vm.startPolling()
+        onDispose { vm.stopPolling() }
+    }
 
     // What the engine is doing right now decides which ranges apply.
     val state = EngineState.from(live)
@@ -95,8 +98,10 @@ fun LiveScreen(vm: ScannerViewModel) {
                 val level = if (v == null) Level.Unknown else HealthCheck.levelFor(pid.code, v, state)
                 Gauge(pid, v, supported.isEmpty() || pid.code in supported, level) { info = pid }
             }
-            if (!polling && live.isEmpty()) item(span = { GridItemSpan(2) }) {
-                Text("Tap Start to begin reading.", color = Ui.Sub)
+            if (shown.isEmpty()) item(span = { GridItemSpan(2) }) {
+                Text("No gauges chosen yet. Tap Choose gauges to pick what to watch.", color = Ui.Sub)
+            } else if (!polling && live.isEmpty()) item(span = { GridItemSpan(2) }) {
+                Text("Paused. Tap Start to read again.", color = Ui.Sub)
             }
         }
     }
