@@ -3,101 +3,191 @@ package com.daniel.carscanner.ui
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.daniel.carscanner.net.BodyShape
+import com.daniel.carscanner.net.CabSize
 import com.daniel.carscanner.obd.HealthCheck
 import com.daniel.carscanner.obd.Level
 import com.daniel.carscanner.obd.Vin
 
 /*
  * WHAT THIS FILE DOES
- * The main screen you land on. From top to bottom:
- *   - Vehicle name (from the VIN) and connection status
- *   - The health ring: green / amber / red summary of the last health check
+ * The main screen, laid out like the Tesla app. From top to bottom:
+ *   - Vehicle name with a switcher (tap it to open your Garage), status line,
+ *     flashlight button
+ *   - The car drawing: right body style, doors and your paint color, animating
+ *     lights, doors, windows, trunk and more. Tap it for Vehicle details.
+ *   - Live view switch and status chips ("Door open", "Engine running"...)
+ *   - Health card: green / amber / red ring with a one-line summary
  *   - Round quick actions: Health check, Codes, All modules, Live data
- *   - One row per car system with its status dot, plus tools and adapter rows
+ *   - One row per car system with its status dot, then tools and settings
  */
-
 @Composable
 fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
     val conn by vm.conn.collectAsStateWithLifecycle()
     val vin by vm.vin.collectAsStateWithLifecycle()
+    val info by vm.vehicle.collectAsStateWithLifecycle()
+    val paint by vm.paint.collectAsStateWithLifecycle()
+    val car by vm.carState.collectAsStateWithLifecycle()
+    val live by vm.liveView.collectAsStateWithLifecycle()
+    val garage by vm.garage.collectAsStateWithLifecycle()
+    val signals by vm.allSignals.collectAsStateWithLifecycle()
+    val returned by vm.returnedCodes.collectAsStateWithLifecycle()
+    val trip by vm.tripLive.collectAsStateWithLifecycle()
     val findings by vm.healthFindings.collectAsStateWithLifecycle()
     val progress by vm.healthProgress.collectAsStateWithLifecycle()
     val volts by vm.voltage.collectAsStateWithLifecycle()
     val modules by vm.modules.collectAsStateWithLifecycle()
+    val recalls by vm.recalls.collectAsStateWithLifecycle()
     val connected = conn is Conn.Connected
 
-    val vehicle = vin?.let { Vin.describe(it) } ?: if (connected) "Your vehicle" else "No vehicle connected"
+    val vehicleName = vin?.let { v -> garage.firstOrNull { it.vin == v }?.nickname?.takeIf { it.isNotBlank() } }
+        ?: info?.displayName ?: vin?.let { Vin.describe(it) } ?: if (connected) "Your vehicle" else "Add your vehicle"
     val status = when (val c = conn) {
         is Conn.Connected -> "Connected" + (volts?.let { ", battery %.1f V".format(it) } ?: "")
         is Conn.Connecting -> "Connecting to ${c.name}…"
         is Conn.Failed -> c.reason
-        Conn.Disconnected -> "Plug in your adapter and turn the ignition on"
+        Conn.Disconnected -> "Not connected"
     }
 
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 28.dp),
-    ) {
-        // Vehicle name and status
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp)) {
+        // Name, status and flashlight
         item {
-            Text(vehicle, style = MaterialTheme.typography.headlineMedium)
-            Text(status, style = MaterialTheme.typography.bodyMedium, color = Ui.Sub, modifier = Modifier.padding(top = 4.dp))
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f).padding(top = 8.dp)) {
+                    // Tap the name to switch cars, like the Tesla app
+                    Row(
+                        Modifier.clip(RoundedCornerShape(10.dp)).clickable { go(Screen.Garage) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(vehicleName, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f, fill = false))
+                        Icon(Icons.Filled.ExpandMore, contentDescription = "Switch car", tint = Ui.Sub)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                        StatusDot(if (connected) Ui.Good else Ui.Sub, 8)
+                        Spacer(Modifier.width(8.dp))
+                        Text(status, style = MaterialTheme.typography.bodyMedium, color = Ui.Sub)
+                    }
+                }
+                TorchButton()
+            }
         }
 
-        // Health ring
+        // The car. Tap to open Vehicle details.
         item {
-            HealthHero(
-                connected = connected,
-                progress = progress,
+            Box(
+                Modifier.fillMaxWidth().height(290.dp)
+                    .clickable(remember { MutableInteractionSource() }, indication = null) { go(Screen.Vehicle) },
+            ) {
+                VehicleView(
+                    shape = info?.shape ?: BodyShape.Sedan,
+                    doors = info?.doorCount ?: 4,
+                    cab = info?.cab ?: CabSize.Regular,
+                    paint = Color(paint),
+                    state = car,
+                    modifier = Modifier.fillMaxSize(),
+                    dim = info == null,
+                )
+                if (info == null) Text(
+                    if (connected) "Reading your VIN…" else "Connect your adapter, or tap the name above to add a car",
+                    color = Ui.Sub, modifier = Modifier.align(Alignment.BottomCenter), textAlign = TextAlign.Center,
+                )
+            }
+        }
+
+        // Live view switch and status chips
+        item {
+            val chips = car.statusChips()
+            val mySignals = signals.count { it.vin == vin }
+            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (connected) {
+                    Row(
+                        Modifier.clip(RoundedCornerShape(20.dp)).background(if (live) Ui.Accent else Ui.Raised)
+                            .clickable { vm.setLiveView(!live) }.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        StatusDot(if (live) Color.White else Ui.Sub, 7)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (live) "Live" else "Live view", color = if (live) Color.White else Ui.Text, style = MaterialTheme.typography.labelMedium)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                }
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+                    items(chips) { c ->
+                        Text(c, style = MaterialTheme.typography.labelMedium,
+                            color = if (c.startsWith("Bulb out")) Ui.Bad else Ui.Text,
+                            modifier = Modifier.clip(RoundedCornerShape(20.dp)).background(Ui.Card).padding(horizontal = 12.dp, vertical = 8.dp))
+                    }
+                }
+            }
+            if (live && mySignals == 0) Text(
+                "Live view shows engine running for now. Set up body data to mirror doors, lights and more.",
+                color = Ui.Sub, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 12.dp)
+                    .clickable { go(Screen.BodyData) },
+            )
+        }
+
+        // Health card
+        item {
+            HealthCard(
+                connected, progress,
                 problems = findings.count { it.level == Level.Problem },
                 watches = findings.count { it.level == Level.Watch },
                 checked = findings.isNotEmpty(),
                 onRun = { vm.runHealthCheck(); go(Screen.Health) },
-                onConnect = { go(Screen.Connect) },
+                onOpen = { go(if (connected) Screen.Health else Screen.Connect) },
             )
+        }
+
+        // Codes that came back after being cleared
+        items(returned, key = { "back" + it.placeKey + it.code }) { r ->
+            Spacer(Modifier.height(10.dp))
+            ReturnedBanner(r, onOpen = { go(Screen.Codes) }, onDismiss = { vm.dismissReturned(r) })
         }
 
         // Quick actions
         item {
-            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 RoundAction(Icons.Filled.HealthAndSafety, "Health", connected) { go(Screen.Health) }
                 RoundAction(Icons.Filled.ReportProblem, "Codes", connected) { go(Screen.Codes) }
                 RoundAction(Icons.Filled.Memory, "Modules", connected) { go(Screen.Modules) }
                 RoundAction(Icons.Filled.Speed, "Live", connected) { go(Screen.Live) }
             }
-            Spacer(Modifier.height(24.dp))
         }
 
         // One row per system, showing its worst finding
         items(HealthCheck.systems) { system ->
-            val mine = findings.filter { it.system == system }
-            val worst = mine.maxByOrNull { it.level.severity }
+            val worst = findings.filter { it.system == system }.maxByOrNull { it.level.severity }
             NavRow(
-                icon = systemIcon(system),
-                title = system,
-                subtitle = worst?.title ?: "Not checked yet",
-                dot = worst?.level?.color,
+                icon = systemIcon(system), title = system,
+                subtitle = worst?.title ?: "Not checked yet", dot = worst?.level?.color,
             ) { go(if (system == HealthCheck.CODES) Screen.Codes else Screen.Health) }
         }
 
-        // Every module in the car (ABS, airbags, body...)
+        // Every module in the car
         item {
             val withCodes = modules.count { it.codes.isNotEmpty() }
             NavRow(
@@ -112,13 +202,27 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
         }
 
         item { HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Ui.Line) }
+        item { NavRow(Icons.Filled.Garage, "Garage", if (garage.isEmpty()) "Your cars appear here" else "${garage.size} car${if (garage.size > 1) "s" else ""}") { go(Screen.Garage) } }
+        item {
+            NavRow(Icons.Filled.DirectionsCar, "Vehicle & recalls",
+                if (info == null) "Details, paint color and recalls" else if (recalls.isEmpty()) "No recalls found" else "${recalls.size} recalls on record",
+                dot = if (recalls.isNotEmpty()) Ui.Watch else null) { go(Screen.Vehicle) }
+        }
+        item {
+            NavRow(Icons.Filled.LocalGasStation, "Trips & MPG", if (trip != null) "Trip in progress" else "Fuel economy and trip log",
+                dot = if (trip != null) Ui.Accent else null) { go(Screen.Trips) }
+        }
+        item { NavRow(Icons.Filled.EventNote, "Maintenance", "Oil changes, filters and fluids") { go(Screen.Maintenance) } }
+        item { NavRow(Icons.Filled.History, "Scan history", "Past results and shareable reports") { go(Screen.History) } }
         item { NavRow(Icons.Filled.Speed, "Live data", "Gauges with normal ranges") { go(Screen.Live) } }
+        item { NavRow(Icons.Filled.Sensors, "Body data", "Set up live doors, lights and windows") { go(Screen.BodyData) } }
         item { NavRow(Icons.Filled.Build, "Active tests", "Switch parts on to prove they work") { go(Screen.Tests) } }
         item { NavRow(Icons.Filled.Code, "Console", "Send raw commands") { go(Screen.Console) } }
         item {
-            NavRow(Icons.Filled.Bluetooth, "Adapter", if (connected) (conn as Conn.Connected).name else "Not connected",
+            NavRow(Icons.Filled.Bluetooth, "Adapter", (conn as? Conn.Connected)?.name ?: "Not connected",
                 dot = if (connected) Ui.Good else null) { go(Screen.Connect) }
         }
+        item { NavRow(Icons.Filled.Info, "About & settings", "Version, appearance, privacy") { go(Screen.About) } }
     }
 }
 
@@ -133,13 +237,13 @@ private fun systemIcon(system: String): ImageVector = when (system) {
 }
 
 /**
- * The big ring. While a check runs it fills up like a progress bar; afterwards
- * it turns green, amber or red with a one-line summary.
+ * Compact health card: a ring on the left (fills while checking, then turns
+ * green, amber or red), a summary, and the Run button.
  */
 @Composable
-private fun HealthHero(
+private fun HealthCard(
     connected: Boolean, progress: Float?, problems: Int, watches: Int, checked: Boolean,
-    onRun: () -> Unit, onConnect: () -> Unit,
+    onRun: () -> Unit, onOpen: () -> Unit,
 ) {
     val color = when {
         progress != null -> Ui.Accent
@@ -152,37 +256,35 @@ private fun HealthHero(
     val (headline, detail) = when {
         !connected -> "Not connected" to "Connect your adapter to check the car."
         progress != null -> "Checking…" to "Keep the engine idling in Park."
-        !checked -> "Not checked yet" to "For best results, let the engine idle until fully warm."
+        !checked -> "Not checked yet" to "Best with the engine warm and idling."
         problems > 0 -> "Needs attention" to "$problems problem${if (problems > 1) "s" else ""}" +
-            (if (watches > 0) ", $watches to watch" else "") + " found."
+            (if (watches > 0) ", $watches to watch" else "") + "."
         watches > 0 -> "Mostly healthy" to "$watches thing${if (watches > 1) "s" else ""} to keep an eye on."
-        else -> "Looks healthy" to "Everything checked is in the normal range."
+        else -> "Looks healthy" to "Everything checked is normal."
     }
 
-    Column(Modifier.fillMaxWidth().padding(vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(210.dp), contentAlignment = Alignment.Center) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Ui.Card).clickable(onClick = onOpen).padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) {
             Canvas(Modifier.fillMaxSize()) {
-                val w = 10.dp.toPx()
-                val stroke = Stroke(w, cap = StrokeCap.Round)
+                val w = 6.dp.toPx()
                 val inset = Offset(w / 2, w / 2)
                 val box = Size(size.width - w, size.height - w)
-                drawArc(Ui.Card, 0f, 360f, false, inset, box, style = stroke)
-                if (fill > 0f) drawArc(color, -90f, 360f * fill, false, inset, box, style = stroke)
+                drawArc(Ui.Raised, 0f, 360f, false, inset, box, style = Stroke(w))
+                if (fill > 0f) drawArc(color, -90f, 360f * fill, false, inset, box, style = Stroke(w, cap = StrokeCap.Round))
             }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    if (progress != null) "${(progress * 100).toInt()}%" else headline,
-                    style = if (progress != null) MaterialTheme.typography.displayMedium else MaterialTheme.typography.titleLarge,
-                    textAlign = TextAlign.Center,
-                )
-            }
+            if (progress != null) Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
         }
-        Spacer(Modifier.height(16.dp))
-        Text(detail, color = Ui.Sub, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(18.dp))
-        when {
-            !connected -> PrimaryButton("Connect adapter", onClick = onConnect)
-            progress == null -> PrimaryButton(if (checked) "Run again" else "Run health check", onClick = onRun)
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f)) {
+            Text(headline, style = MaterialTheme.typography.titleMedium)
+            Text(detail, color = Ui.Sub, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Start)
+        }
+        if (connected && progress == null) {
+            Spacer(Modifier.width(8.dp))
+            PrimaryButton(if (checked) "Again" else "Run", onClick = onRun)
         }
     }
 }

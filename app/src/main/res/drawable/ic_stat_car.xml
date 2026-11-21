@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Small white icon for the notification bar. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M5,11l1.5,-4.5C6.8,5.6 7.6,5 8.5,5h7c0.9,0 1.7,0.6 2,1.5L19,11v7c0,0.6 -0.4,1 -1,1h-1c-0.6,0 -1,-0.4 -1,-1v-1H8v1c0,0.6 -0.4,1 -1,1H6c-0.6,0 -1,-0.4 -1,-1V11zM7.2,10h9.6l-1,-3H8.2L7.2,10zM7.5,15c0.8,0 1.5,-0.7 1.5,-1.5S8.3,12 7.5,12S6,12.7 6,13.5S6.7,15 7.5,15zM16.5,15c0.8,0 1.5,-0.7 1.5,-1.5S17.3,12 16.5,12S15,12.7 15,13.5S15.7,15 16.5,15z" />
+</vector>

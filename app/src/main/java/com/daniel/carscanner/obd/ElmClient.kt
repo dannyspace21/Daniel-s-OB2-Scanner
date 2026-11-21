@@ -5,8 +5,12 @@ import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
 
 /*
  * WHAT THIS FILE DOES
@@ -26,6 +30,17 @@ class ElmClient(
     private val log: (String) -> Unit,
 ) {
     private val mutex = Mutex()
+
+    // "Session" lock: some jobs need several commands in a row without anything
+    // else sneaking in between (e.g. point at the ABS module, then ask it for codes).
+    // Those jobs run inside exclusive { }. Everything else waits its turn.
+    private val session = Mutex()
+    private class SessionMarker : AbstractCoroutineContextElement(SessionMarker) { companion object Key : CoroutineContext.Key<SessionMarker> }
+
+    /** Runs a multi-step job with the adapter all to itself. Safe to nest. */
+    suspend fun <T> exclusive(block: suspend () -> T): T =
+        if (coroutineContext[SessionMarker] != null) block()
+        else session.withLock { withContext(SessionMarker()) { block() } }
     var isCan = true; private set
     /** True for cars that use long 29-bit network addresses (some European and newer cars). */
     var isCan29 = false; private set
@@ -37,7 +52,11 @@ class ElmClient(
      * Only one command runs at a time (the lock), because the adapter can't juggle two.
      * quiet = true keeps fast repeated reads (live gauges) out of the Console log.
      */
-    suspend fun send(cmd: String, timeoutMs: Long = 4_000, quiet: Boolean = false): String = mutex.withLock {
+    suspend fun send(cmd: String, timeoutMs: Long = 4_000, quiet: Boolean = false): String =
+        if (coroutineContext[SessionMarker] != null) sendNow(cmd, timeoutMs, quiet)
+        else session.withLock { sendNow(cmd, timeoutMs, quiet) }
+
+    private suspend fun sendNow(cmd: String, timeoutMs: Long, quiet: Boolean): String = mutex.withLock {
         while (transport.input.tryReceive().isSuccess) { /* drop stale bytes */ }
         if (!quiet) log("> $cmd")
         transport.write((cmd + "\r").toByteArray(Charsets.US_ASCII))
@@ -158,6 +177,33 @@ class ElmClient(
     }
 
     /** Asks the adapter for the voltage at the OBD port (works even if the car doesn't report it). */
+    /** Emissions inspection readiness (mode 01 PID 01, all four bytes). */
+    suspend fun readiness(): Readiness? {
+        val line = Hex.dataLines(send("0101")).firstOrNull { it.startsWith("4101") && it.length >= 12 } ?: return null
+        val b = Hex.bytes(line.substring(4))
+        return Readiness.parse(b[0], b[1], b[2], b[3])
+    }
+
+    /**
+     * Freeze frame: the snapshot the car saved the moment a code was set.
+     * Returns the code that caused it, plus key readings from that moment
+     * (rpm, speed, temperature, load, fuel trims...). Null if there's no snapshot.
+     */
+    suspend fun freezeFrame(): Pair<String, List<Pair<Pid, Double>>>? {
+        val head = Hex.dataLines(send("020200")).firstOrNull { it.startsWith("420200") && it.length >= 10 } ?: return null
+        val code = DtcDecoder.decode(head.substring(6, 10)) ?: return null
+        val readings = mutableListOf<Pair<Pid, Double>>()
+        for (code2 in listOf(0x0C, 0x0D, 0x05, 0x04, 0x11, 0x06, 0x07, 0x08, 0x09, 0x0F, 0x0B)) {
+            val pid = Pids.byCode[code2] ?: continue
+            val tag = "42%02X00".format(code2)
+            val line = try { Hex.dataLines(send("02%02X00".format(code2), quiet = true)).firstOrNull { it.startsWith(tag) } } catch (_: ElmTimeout) { null }
+                ?: continue
+            val bytes = Hex.bytes(line.substring(tag.length))
+            if (bytes.size >= pid.bytes) readings += pid to pid.decode(bytes)
+        }
+        return code to readings
+    }
+
     suspend fun batteryVoltage(): String = send("ATRV", quiet = true)
 
     /** The command that points the adapter back at "all modules" after a test talked to one module. */

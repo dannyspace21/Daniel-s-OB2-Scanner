@@ -25,11 +25,39 @@ import com.daniel.carscanner.obd.ModuleScanner
 import com.daniel.carscanner.obd.Modules
 import com.daniel.carscanner.obd.DiagProtocol
 import com.daniel.carscanner.obd.Vin
+import com.daniel.carscanner.obd.DtcLibrary
+import com.daniel.carscanner.net.Nhtsa
+import com.daniel.carscanner.net.Recall
+import com.daniel.carscanner.net.VehicleInfo
+import com.daniel.carscanner.data.GarageCar
+import com.daniel.carscanner.data.CodeWatch
+import com.daniel.carscanner.data.ReturnedCode
+import com.daniel.carscanner.data.FuelMath
+import com.daniel.carscanner.data.TripMeter
+import com.daniel.carscanner.data.TripRecord
+import com.daniel.carscanner.alerts.Notifier
+import com.daniel.carscanner.widget.CarWidget
+import com.daniel.carscanner.data.GarageJson
+import com.daniel.carscanner.data.HistoryEntry
+import com.daniel.carscanner.data.HistoryStore
+import com.daniel.carscanner.data.MaintItem
+import com.daniel.carscanner.data.Maintenance
+import com.daniel.carscanner.obd.BlinkTracker
+import com.daniel.carscanner.obd.BodySignal
+import com.daniel.carscanner.obd.BodySignalStore
+import com.daniel.carscanner.obd.CarState
+import com.daniel.carscanner.obd.Element
+import com.daniel.carscanner.obd.Readiness
+import com.daniel.carscanner.obd.Pid
+import com.daniel.carscanner.obd.Visuals
+import com.daniel.carscanner.obd.WatchTracker
+import com.daniel.carscanner.obd.Hex
 import com.daniel.carscanner.obd.Pids
 import com.daniel.carscanner.obd.Risk
 import com.daniel.carscanner.obd.Safety
 import com.daniel.carscanner.obd.Uds
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -118,7 +146,71 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     private var moduleJob: Job? = null
     private val moduleNames = app.getSharedPreferences("module_names", 0)   // your renames
 
+    // Vehicle details, recalls and drawing (from NHTSA; cached on the phone so they show offline)
+    private val prefs = app.getSharedPreferences("vehicle", 0)
+    val vehicle = MutableStateFlow<VehicleInfo?>(null)
+    val recalls = MutableStateFlow<List<Recall>>(emptyList())
+    val vehicleStatus = MutableStateFlow<String?>(null)        // "Looking up…" or an error, else null
+    val paint = MutableStateFlow(DEFAULT_PAINT)                 // chosen paint color for the drawing
+    private var vehicleJob: Job? = null
+
+    // What the car drawing shows right now (from live view, active tests and previews)
+    val carState = MutableStateFlow(CarState())
+    // Set by the Vehicle screen's "Set up" buttons so the Tests screen opens a pre-filled form
+    val testDraftVisual = MutableStateFlow<String?>(null)
+
+    // Garage: every car you've connected to or looked up
+    val garage = MutableStateFlow(GarageJson.fromJson(prefs.getString("garage", null)))
+
+    // Live view: reads your body signals over and over to mirror the real car
+    private val signalStore = BodySignalStore(File(app.filesDir, "body_signals.json"))
+    val allSignals = MutableStateFlow(signalStore.load())
+    val liveView = MutableStateFlow(false)
+    val liveViewPaused = MutableStateFlow(false)    // paused while Console or Watch is open
+    private var liveJob: Job? = null
+
+    // Watch tool: shows a reply's bytes live and highlights what changes
+    val watchBytes = MutableStateFlow<List<Int>>(emptyList())
+    val watchChanged = MutableStateFlow<Set<Int>>(emptySet())
+    val watchBits = MutableStateFlow<Map<Int, Set<Int>>>(emptyMap())
+    val watchError = MutableStateFlow<String?>(null)
+    private var watchJob: Job? = null
+
+    // Scan history, maintenance, inspection readiness, freeze frame
+    private val historyStore = HistoryStore(File(app.filesDir, "history.json"))
+    val history = MutableStateFlow(historyStore.load())
+    val maintenance = MutableStateFlow<List<MaintItem>>(emptyList())
+    val readiness = MutableStateFlow<Readiness?>(null)
+    val freezeFrame = MutableStateFlow<Pair<String, List<Pair<Pid, Double>>>?>(null)
+
+    // Codes that came back after you cleared them (shown on Home and Codes until dismissed)
+    val returnedCodes = MutableStateFlow<List<ReturnedCode>>(emptyList())
+
+    // Trips and MPG
+    val trips = MutableStateFlow<List<TripRecord>>(emptyList())
+    val tripLive = MutableStateFlow<TripMeter?>(null)          // the trip in progress, or null
+    val tripTick = MutableStateFlow(0L)                        // changes every reading so the screen refreshes
+    val fuelPrice = MutableStateFlow(prefs.getString("fuel_price", null)?.toDoubleOrNull())
+    private var tripJob: Job? = null
+
+    // Recall alerts on/off (the daily background check reads the same setting)
+    val recallAlerts = MutableStateFlow(prefs.getBoolean("recall_alerts", true))
+
+    // Set when a notification or the widget asks to open a certain car and screen
+    val openRequest = MutableStateFlow<Pair<String?, String>?>(null)
+
+    // Appearance setting: System, Light or Dark
+    val themeMode = MutableStateFlow(
+        runCatching { ThemeMode.valueOf(prefs.getString("theme", "System") ?: "System") }.getOrDefault(ThemeMode.System)
+    )
+
     val bluetoothOn: Boolean get() = adapter?.isEnabled == true
+
+    init {
+        // Load the code library in the background, and show the last car right away (even offline).
+        viewModelScope.launch(Dispatchers.IO) { DtcLibrary.load(app) }
+        prefs.getString("last_vin", null)?.let { setVin(it) }
+    }
 
     // ---------- Devices ----------
 
@@ -189,8 +281,11 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
                 elm = client
                 conn.value = Conn.Connected(item.name, version, client.protocolName)
                 supported.value = runCatching { client.supportedPids() }.getOrDefault(emptySet())
-                vin.value = runCatching { client.readVin() }.getOrNull()
+                runCatching { client.readVin() }.getOrNull()?.let { setVin(it) }
+                markSeen()   // update "last connected" in the garage
                 voltage.value = runCatching { parseVolts(client.batteryVoltage()) }.getOrNull()
+                // Newer cars report their odometer; save it for the maintenance tracker
+                if (0xA6 in supported.value) runCatching { client.readPid(Pids.byCode[0xA6]!!) }.getOrNull()?.let { setOdometer(it.toInt(), fromCar = true) }
             } catch (e: CancellationException) {
                 t.close(); throw e
             } catch (e: Exception) {
@@ -203,6 +298,9 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     /** Stops everything and closes the Bluetooth link. */
     fun disconnect() {
         stopPolling()
+        setLiveView(false)
+        watchJob?.cancel()
+        stopTrip()
         testJob?.cancel()
         healthJob?.cancel()
         moduleJob?.cancel()
@@ -285,23 +383,37 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
         storedCodes.value = e.readCodes("03")
         pendingCodes.value = e.readCodes("07")
         permanentCodes.value = try { e.readCodes("0A") } catch (_: ElmTimeout) { emptyList() }
+        readiness.value = try { e.readiness() } catch (_: ElmTimeout) { null }
+        freezeFrame.value = if (storedCodes.value.isEmpty()) null else try { e.freezeFrame() } catch (_: ElmTimeout) { null }
         codesRead.value = true
+        recordCodes()
+        checkReturned(CodeWatch.ENGINE, "Engine computer", storedCodes.value + pendingCodes.value)
+        val st = storedCodes.value; val pe = pendingCodes.value
+        writeWidgetStatus(
+            when { st.isNotEmpty() -> Level.Problem; pe.isNotEmpty() -> Level.Watch; else -> Level.Good },
+            when { st.isNotEmpty() -> "${st.size} stored code${if (st.size > 1) "s" else ""}"; pe.isNotEmpty() -> "${pe.size} pending code${if (pe.size > 1) "s" else ""}"; else -> "No trouble codes" },
+        )
     }
 
     /** Clears codes, then re-reads them so you can see what came back. */
     fun clearCodes() = launchBusy("Clearing codes") { e ->
+        val before = (storedCodes.value + pendingCodes.value).ifEmpty { e.readCodes("03") + e.readCodes("07") }
         val ok = e.clearCodes()
+        if (ok) rememberCleared(CodeWatch.ENGINE, before)
         message.value = if (ok) "Codes cleared." else "The car refused to clear codes. Turn the engine off, ignition on, and try again."
         e.monitorStatus()?.let { (mil, _) -> milOn.value = mil }
         storedCodes.value = e.readCodes("03")
         pendingCodes.value = e.readCodes("07")
+        writeWidgetStatus(if (storedCodes.value.isEmpty()) Level.Good else Level.Problem,
+            if (storedCodes.value.isEmpty()) "Codes cleared" else "${storedCodes.value.size} codes still stored")
     }
 
     // ---------- Active tests ----------
 
     /** Adds a new test or replaces an edited one, and saves to the phone. */
     fun saveTest(t: ActiveTest) {
-        tests.update { list -> (list.filter { it.id != t.id } + t).also(store::save) }
+        val owned = if (t.vin.isBlank()) t.copy(vin = vin.value ?: "") else t
+        tests.update { list -> (list.filter { it.id != owned.id } + owned).also(store::save) }
     }
 
     /** Removes a test and saves. */
@@ -328,26 +440,30 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
         testJob = viewModelScope.launch {
             runningTest.value = t.id
             testStatus.value = "Starting…"
-            try {
+            try { e.exclusive {
                 if (t.header.isNotBlank()) e.send("ATSH" + t.header.replace(" ", ""))
                 for (cmd in t.startCommands) {
                     val r = e.send(cmd)
                     testStatus.value = Uds.describe(r)
-                    if (Uds.negative(r) != null || "NO DATA" in r.uppercase()) return@launch
+                    if (Uds.negative(r) != null || "NO DATA" in r.uppercase()) return@exclusive
                 }
+                showVisual(t.visual, true)   // animate the car drawing to match
                 val endAt = System.currentTimeMillis() + t.maxSeconds * 1000L
                 while (isActive && System.currentTimeMillis() < endAt) {
                     testStatus.value = "Running, stops in ${(endAt - System.currentTimeMillis() + 999) / 1000} s"
                     delay(2_000)
                     if (t.keepAlive.isNotBlank()) e.send(t.keepAlive, quiet = true)
                 }
-            } catch (x: IOException) {
+            } } catch (x: IOException) {
                 testStatus.value = "Error: ${x.message}"
             } finally {
                 withContext(NonCancellable) {
-                    for (cmd in t.stopCommands) runCatching { e.send(cmd) }
-                    runCatching { e.send(e.resetHeaderCommand()) }
+                    e.exclusive {
+                        for (cmd in t.stopCommands) runCatching { e.send(cmd) }
+                        runCatching { e.send(e.resetHeaderCommand()) }
+                    }
                 }
+                showVisual(t.visual, false)
                 if (!testStatus.value.startsWith("Rejected") && !testStatus.value.startsWith("No reply") &&
                     !testStatus.value.startsWith("Error")) testStatus.value = "Stopped"
                 runningTest.value = null
@@ -418,6 +534,18 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
                 // Step 4: judge everything
                 healthFindings.value = (HealthCheck.evaluate(samples, seconds) + codeFindings())
                     .sortedByDescending { it.level.severity }
+                val bad = healthFindings.value.filter { it.level == Level.Problem || it.level == Level.Watch }
+                record("Health check",
+                    if (bad.isEmpty()) "Everything checked was normal" else "${bad.size} item${if (bad.size > 1) "s" else ""} flagged",
+                    healthFindings.value.maxOf { it.level.severity }.let { s -> Level.entries.first { it.severity == s } },
+                    bad.map { "${it.level}: ${it.title}${if (it.reading.isNotBlank()) " (${it.reading})" else ""}" })
+                checkReturned(CodeWatch.ENGINE, "Engine computer", storedCodes.value + pendingCodes.value)
+                val problems = healthFindings.value.count { it.level == Level.Problem }
+                val watches = healthFindings.value.count { it.level == Level.Watch }
+                writeWidgetStatus(
+                    when { problems > 0 -> Level.Problem; watches > 0 -> Level.Watch; else -> Level.Good },
+                    when { problems > 0 -> "Needs attention"; watches > 0 -> "Mostly healthy"; else -> "Looks healthy" },
+                )
             } catch (x: IOException) {
                 onLinkLost(x)
             } finally {
@@ -473,7 +601,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
             val scanner = ModuleScanner(e)
             val found = mutableListOf<Module>()
             modules.value = emptyList()
-            try {
+            try { e.exclusive {
                 scanner.begin()
                 val list = ModuleScanner.addresses(e.isCan29, deep)
                 // Step 1: who's there?
@@ -495,11 +623,17 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
                         name = nameFor(m.address, reported), protocol = result?.first,
                         codes = result?.second ?: emptyList(), readOk = result != null,
                     )
+                    checkReturned(m.address.label, found[i].name.removeSuffix(" (likely)"), found[i].codes.map { it.code })
                     modules.value = found.toList()
                 }
                 modulesScanned.value = true
                 if (found.isEmpty()) message.value = "No modules answered. Some adapters can't reach them; an OBDLink MX+ is more capable."
-            } catch (x: IOException) {
+                val withCodes = found.filter { it.codes.isNotEmpty() }
+                record("Module scan",
+                    "${found.size} modules, ${if (withCodes.isEmpty()) "no codes" else "${withCodes.size} with codes"}",
+                    if (withCodes.isEmpty()) Level.Good else withCodes.maxOf { it.level.severity }.let { s -> Level.entries.first { it.severity == s } },
+                    withCodes.map { m -> "${m.name}: " + m.codes.joinToString(", ") { c -> c.display + (c.failureText?.let { " ($it)" } ?: "") } })
+            } } catch (x: IOException) {
                 onLinkLost(x)
             } finally {
                 withContext(NonCancellable) { runCatching { scanner.end() } }
@@ -527,11 +661,11 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     private fun clearModules(targets: List<Module>): Unit = launchBusy("Clearing codes") { e ->
         val scanner = ModuleScanner(e)
         val refused = mutableListOf<String>()
-        try {
+        e.exclusive { try {
             scanner.begin()
             for (m in targets) {
                 val ok = scanner.clear(m.address, m.protocol ?: DiagProtocol.UDS)
-                if (!ok) refused += m.name
+                if (!ok) refused += m.name else rememberCleared(m.address.label, m.codes.map { it.code })
                 val result = scanner.readCodes(m.address)
                 modules.update { list ->
                     list.map { if (it.address == m.address) it.copy(codes = result?.second ?: emptyList(), readOk = result != null) else it }
@@ -539,9 +673,435 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
             }
         } finally {
             withContext(NonCancellable) { runCatching { scanner.end() } }
-        }
+        } }
         message.value = if (refused.isEmpty()) "Codes cleared."
         else "Refused by ${refused.joinToString(", ")}. Some faults must be fixed first, and some modules need the engine off."
+    }
+
+    // ---------- Vehicle, recalls and drawing ----------
+
+    /** Remembers this VIN as the current car and looks it up. */
+    private fun setVin(v: String) {
+        vin.value = v
+        prefs.edit().putString("last_vin", v).apply()
+        if (garage.value.none { it.vin == v }) saveGarage(garage.value + GarageCar(v))
+        maintenance.value = Maintenance.fromJson(prefs.getString("maint_$v", null)) ?: Maintenance.defaults()
+        trips.value = TripRecord.listFromJson(prefs.getString("trips_$v", null))
+        returnedCodes.value = emptyList()
+        CarWidget.updateAll(getApplication())
+        carState.value = CarState()
+        loadVehicle(v)
+    }
+
+    /** Called from the Vehicle screen's "Enter a VIN" box. Checks it looks like a real VIN first. */
+    fun setVinManually(input: String) {
+        val v = input.uppercase().filter { it.isLetterOrDigit() }
+        when {
+            v.length != 17 -> message.value = "A VIN is exactly 17 characters."
+            v.any { it in "IOQ" } -> message.value = "VINs never contain I, O or Q. Check for 1 and 0 instead."
+            else -> setVin(v)
+        }
+    }
+
+    /**
+     * Shows saved details instantly, then refreshes from NHTSA:
+     * VIN -> year/make/model/body -> recalls. Both are saved for offline use.
+     */
+    private fun loadVehicle(v: String) {
+        vehicleJob?.cancel()
+        vehicleJob = viewModelScope.launch {
+            paint.value = prefs.getLong("paint_$v", DEFAULT_PAINT)
+            vehicle.value = prefs.getString("info_$v", null)?.let { VehicleInfo.fromJson(it) }
+            recalls.value = prefs.getString("recalls_$v", null)?.let { Recall.listFromJson(it) } ?: emptyList()
+            vehicleStatus.value = if (vehicle.value == null) "Looking up your vehicle…" else null
+            try {
+                val info = withContext(Dispatchers.IO) { Nhtsa.decodeVin(v) }
+                vehicle.value = info
+                prefs.edit().putString("info_$v", info.toJson()).apply()
+                val list = withContext(Dispatchers.IO) { Nhtsa.recalls(info) }
+                // Tell you about recalls that weren't there last time
+                val previous = prefs.getString("recalls_$v", null)?.let { Recall.listFromJson(it).map { r -> r.campaign }.toSet() }
+                val fresh = if (previous == null) emptyList() else list.filter { it.campaign !in previous }
+                if (fresh.isNotEmpty()) message.value = "New recall for your car: ${fresh.first().component.substringBefore(':').lowercase()}. See Vehicle & recalls."
+                recalls.value = list
+                prefs.edit().putString("recalls_$v", Recall.listToJson(list)).apply()
+                vehicleStatus.value = null
+                CarWidget.updateAll(getApplication())
+            } catch (x: CancellationException) {
+                throw x
+            } catch (x: Exception) {
+                // Keep whatever we had saved; only complain if we have nothing at all.
+                vehicleStatus.value = if (vehicle.value == null) "Couldn't reach NHTSA: ${x.message ?: "no connection"}" else null
+            }
+        }
+    }
+
+    /** Saves the paint color for this car. */
+    fun setPaint(color: Long) {
+        paint.value = color
+        vin.value?.let { prefs.edit().putLong("paint_$it", color).apply() }
+        CarWidget.updateAll(getApplication())
+    }
+
+    /** Saves the appearance choice. The theme follows it immediately. */
+    fun setTheme(mode: ThemeMode) {
+        themeMode.value = mode
+        prefs.edit().putString("theme", mode.name).apply()
+    }
+
+    /** Turns an active test's "Shows on car" setting into the matching animation. */
+    private fun showVisual(visual: String, on: Boolean) {
+        Visuals.elements(visual).forEach { setElement(it, on) }
+    }
+
+    /** Switches one element of the drawing on or off (pulses fire a ripple instead). */
+    private fun setElement(e: Element, on: Boolean) {
+        carState.update { st ->
+            if (e.kind == Element.Kind.Pulse) { if (on) st.copy(pulses = st.pulses + (e to System.currentTimeMillis())) else st }
+            else st.with(e, if (on) 1f else 0f)
+        }
+    }
+
+    /**
+     * The active test that controls a part of the current car, if you've set one up.
+     * An exact match ("Driver door") wins over a combination ("All doors").
+     */
+    fun testFor(e: Element, all: List<ActiveTest>): ActiveTest? {
+        val mine = all.filter { it.vin.isBlank() || it.vin == vin.value }
+        return mine.firstOrNull { it.visual == e.key } ?: mine.firstOrNull { e in Visuals.elements(it.visual) }
+    }
+
+    // ---------- Garage ----------
+
+    private fun saveGarage(list: List<GarageCar>) {
+        garage.value = list
+        prefs.edit().putString("garage", GarageJson.toJson(list)).apply()
+    }
+
+    /** Records that we just connected to the current car. */
+    private fun markSeen() {
+        val v = vin.value ?: return
+        saveGarage(garage.value.map { if (it.vin == v) it.copy(lastSeen = System.currentTimeMillis()) else it })
+    }
+
+    /** Makes another car from the garage the current one. */
+    fun switchCar(v: String) { if (v != vin.value) setVin(v) }
+
+    fun renameCar(v: String, nickname: String) {
+        saveGarage(garage.value.map { if (it.vin == v) it.copy(nickname = nickname.trim()) else it })
+        CarWidget.updateAll(getApplication())
+    }
+
+    /** Removes a car from the garage (its saved data stays in case you add it back). */
+    fun removeCar(v: String) {
+        val rest = garage.value.filter { it.vin != v }
+        saveGarage(rest)
+        if (vin.value == v) {
+            val next = rest.maxByOrNull { it.lastSeen }?.vin
+            if (next != null) setVin(next) else {
+                vin.value = null; vehicle.value = null; recalls.value = emptyList()
+                prefs.edit().remove("last_vin").apply()
+            }
+        }
+    }
+
+    /** Saved details for any garage car (for the Garage list). */
+    fun infoFor(v: String): VehicleInfo? = prefs.getString("info_$v", null)?.let { VehicleInfo.fromJson(it) }
+    fun paintFor(v: String): Long = prefs.getLong("paint_$v", DEFAULT_PAINT)
+
+    /** The name to show for a car: your nickname, else "2016 Lexus RC". */
+    fun nameFor(v: String): String =
+        garage.value.firstOrNull { it.vin == v }?.nickname?.takeIf { it.isNotBlank() }
+            ?: infoFor(v)?.displayName ?: Vin.describe(v) ?: v
+
+    // ---------- Maintenance ----------
+
+    private fun today(): Long = System.currentTimeMillis() / 86_400_000L
+
+    private fun saveMaintenance(list: List<MaintItem>) {
+        maintenance.value = list
+        vin.value?.let { prefs.edit().putString("maint_$it", Maintenance.toJson(list)).apply() }
+    }
+
+    /** Current mileage for the current car, from the car or typed in. */
+    fun setOdometer(miles: Int, fromCar: Boolean = false) {
+        val v = vin.value ?: return
+        saveGarage(garage.value.map { if (it.vin == v) it.copy(odometerMiles = miles, odometerFromCar = fromCar) else it })
+    }
+
+    fun markServiceDone(item: MaintItem) {
+        val miles = garage.value.firstOrNull { it.vin == vin.value }?.odometerMiles
+        saveMaintenance(maintenance.value.map { if (it.id == item.id) it.copy(lastDay = today(), lastMiles = miles ?: it.lastMiles) else it })
+    }
+
+    fun saveServiceItem(item: MaintItem) {
+        saveMaintenance(maintenance.value.filter { it.id != item.id } + item)
+    }
+
+    fun deleteServiceItem(item: MaintItem) { saveMaintenance(maintenance.value.filter { it.id != item.id }) }
+
+    fun todayDay(): Long = today()
+
+    // ---------- History ----------
+
+    /** Adds an entry to the scan history for the current car. */
+    private fun record(kind: String, title: String, level: Level, lines: List<String>) {
+        val v = vin.value ?: "unknown"
+        history.update { (it + HistoryEntry(v, System.currentTimeMillis(), kind, title, level, lines)).takeLast(300).also(historyStore::save) }
+    }
+
+    private fun recordCodes() {
+        val s = storedCodes.value; val p = pendingCodes.value
+        val lines = s.map { "Stored $it: ${com.daniel.carscanner.obd.DtcDecoder.describe(it)}" } +
+            p.map { "Pending $it: ${com.daniel.carscanner.obd.DtcDecoder.describe(it)}" } +
+            listOfNotNull(readiness.value?.verdict?.second?.let { "Inspection: $it" })
+        record("Codes",
+            when { s.isNotEmpty() -> "${s.size} stored code${if (s.size > 1) "s" else ""}"; p.isNotEmpty() -> "${p.size} pending"; else -> "No codes" },
+            when { s.isNotEmpty() -> Level.Problem; p.isNotEmpty() -> Level.Watch; else -> Level.Good }, lines)
+    }
+
+    fun deleteHistory(e: HistoryEntry) { history.update { list -> list.filter { it != e }.also(historyStore::save) } }
+
+    // ---------- Body signals and live view ----------
+
+    fun saveSignal(sig: BodySignal) {
+        allSignals.update { list -> (list.filter { it.id != sig.id } + sig).also(signalStore::save) }
+    }
+
+    fun deleteSignal(id: String) { allSignals.update { list -> list.filter { it.id != id }.also(signalStore::save) } }
+
+    /** Turns live view on or off. While on, the drawing mirrors the real car. */
+    fun setLiveView(on: Boolean) {
+        liveView.value = on
+        liveJob?.cancel(); liveJob = null
+        if (on) startLiveView()
+    }
+
+    /**
+     * The live view loop:
+     *  - reads each body signal (grouped so one request feeds several signals)
+     *  - turn signals every cycle, everything else every third cycle
+     *  - engine rpm every few seconds for "engine running"
+     *  - feeds turn signals through BlinkTracker so the drawing flashes at your car's rate
+     * Runs inside exclusive { } so it never collides with scans or tests.
+     */
+    private fun startLiveView() {
+        val e = elm ?: run { message.value = "Connect to your adapter first."; liveView.value = false; return }
+        liveJob = viewModelScope.launch {
+            val trackers = mapOf(Element.TurnL to BlinkTracker(), Element.TurnR to BlinkTracker(), Element.Hazard to BlinkTracker())
+            var cycle = 0
+            try {
+                while (isActive) {
+                    if (liveViewPaused.value || healthJob != null || moduleJob != null || testJob != null) { delay(400); continue }
+                    val v = vin.value
+                    val sigs = allSignals.value.filter { it.vin == v }
+                    val due = sigs.filter { it.fast || it.element in trackers || cycle % 3 == 0 }
+                    val read = mutableMapOf<Element, Float>()
+                    val failed = mutableSetOf<Element>()
+                    val failedChecked = mutableSetOf<Element>()
+                    e.exclusive {
+                        for ((key, group) in due.groupBy { it.header to it.command }) {
+                            try {
+                                e.send("ATSH" + key.first.replace(" ", ""), quiet = true)
+                                val reply = e.send(key.second, 1_500, quiet = true)
+                                for (s in group) s.decode(reply)?.let { value ->
+                                    if (s.failure) { failedChecked += s.element; if (value > 0.5f) failed += s.element }
+                                    else read[s.element] = value
+                                }
+                            } catch (_: ElmTimeout) { }
+                        }
+                        if (due.isNotEmpty()) e.send(e.resetHeaderCommand(), quiet = true)
+                        if (cycle % 10 == 0) {
+                            try { e.readPid(Pids.byCode[0x0C]!!)?.let { read[Element.Engine] = if (it > 300) 1f else 0f } } catch (_: ElmTimeout) { }
+                        }
+                    }
+                    val now = System.currentTimeMillis()
+                    carState.update { st ->
+                        var next = st
+                        var blink = st.blinkMs
+                        var anchor = st.blinkAnchor
+                        for ((el, value) in read) {
+                            val tracker = trackers[el]
+                            if (tracker != null) {
+                                val (active, period, last) = tracker.feed(value > 0.5f, now)
+                                if (period != null) blink = period
+                                if (last != null) anchor = last
+                                next = next.with(el, if (active) 1f else 0f)
+                            } else if (el.kind == Element.Kind.Pulse) {
+                                if (value > 0.5f && !st.on(el)) next = next.copy(pulses = next.pulses + (el to now))
+                                next = next.with(el, value)
+                            } else next = next.with(el, value)
+                        }
+                        next.copy(
+                            blinkMs = blink, blinkAnchor = anchor,
+                            failed = (next.failed - failedChecked) + failed,
+                            known = sigs.map { it.element }.toSet() + Element.Engine,
+                        )
+                    }
+                    cycle++
+                    delay(if (sigs.any { it.element in trackers }) 120 else 300)
+                }
+            } catch (x: IOException) {
+                onLinkLost(x)
+            }
+        }
+    }
+
+    /**
+     * Watch tool: sends one request over and over and shows the reply's bytes,
+     * highlighting any byte or bit that changed in the last few seconds.
+     * Open a door while watching and the byte that flips is your door signal.
+     */
+    fun startWatch(header: String, command: String) {
+        val e = elm ?: run { watchError.value = "Connect to your adapter first."; return }
+        val cmd = command.replace(" ", "").uppercase()
+        if (Safety.classify(cmd) != Risk.Normal) { watchError.value = "Watch only sends read requests."; return }
+        watchJob?.cancel()
+        liveViewPaused.value = true
+        watchError.value = null
+        watchJob = viewModelScope.launch {
+            val tracker = WatchTracker()
+            try {
+                while (isActive) {
+                    val reply = try {
+                        e.exclusive {
+                            if (header.isNotBlank()) e.send("ATSH" + header.replace(" ", ""), quiet = true)
+                            val r = e.send(cmd, 1_500, quiet = true)
+                            if (header.isNotBlank()) e.send(e.resetHeaderCommand(), quiet = true)
+                            r
+                        }
+                    } catch (_: ElmTimeout) { null }
+                    val line = reply?.let { Hex.dataLines(it).firstOrNull() }
+                    if (line == null) watchError.value = "No reply. Check the module address and request."
+                    else {
+                        watchError.value = if (line.startsWith("7F")) Uds.describe(reply) else null
+                        val now = System.currentTimeMillis()
+                        tracker.feed(Hex.bytes(line), now)
+                        watchBytes.value = tracker.current
+                        val changed = tracker.changedBytes(now)
+                        watchChanged.value = changed
+                        watchBits.value = changed.associateWith { tracker.changedBits(it, now) }
+                    }
+                    delay(250)
+                }
+            } catch (x: IOException) {
+                onLinkLost(x)
+            }
+        }
+    }
+
+    fun stopWatch() {
+        watchJob?.cancel(); watchJob = null
+        watchBytes.value = emptyList(); watchChanged.value = emptySet(); watchBits.value = emptyMap()
+        liveViewPaused.value = false
+    }
+
+    // ---------- Codes that come back ----------
+
+    private fun clearedMap(): Map<String, Long> = CodeWatch.fromJson(prefs.getString("cleared_${vin.value}", null))
+    private fun saveCleared(map: Map<String, Long>) { prefs.edit().putString("cleared_${vin.value}", CodeWatch.toJson(map)).apply() }
+
+    /** Called right after clearing: remembers which codes were cleared, and when. */
+    private fun rememberCleared(place: String, codes: List<String>) {
+        if (codes.isEmpty() || vin.value == null) return
+        val now = System.currentTimeMillis()
+        saveCleared(clearedMap() + codes.distinct().associate { CodeWatch.key(place, it) to now })
+    }
+
+    /** Called after every code read: flags any cleared code that has reappeared, and alerts you once. */
+    private fun checkReturned(place: String, where: String, codes: List<String>) {
+        val v = vin.value ?: return
+        val cleared = clearedMap()
+        val back = CodeWatch.returned(cleared, place, where, codes)
+        if (back.isEmpty()) return
+        saveCleared(cleared - back.map { CodeWatch.key(it.placeKey, it.code) }.toSet())   // alert once per return
+        returnedCodes.update { old -> (old + back).distinctBy { it.placeKey + it.code } }
+        val now = System.currentTimeMillis()
+        record("Code returned", back.joinToString(", ") { it.code } + " came back", Level.Problem,
+            back.map { "${it.code} (${it.where}) returned ${CodeWatch.ago(it.clearedAt, now)} after being cleared" })
+        message.value = "${back.joinToString(", ") { it.code }} came back after you cleared ${if (back.size == 1) "it" else "them"}."
+        Notifier.codesReturned(getApplication(), v, nameFor(v), back)
+    }
+
+    fun dismissReturned(r: ReturnedCode) { returnedCodes.update { list -> list.filter { it != r } } }
+
+    // ---------- Trips and MPG ----------
+
+    /**
+     * Starts a trip: about once a second reads speed and fuel use, and adds up
+     * miles, gallons and MPG. Fuel use comes from the car's fuel-rate reading
+     * if it has one, otherwise from the mass air flow sensor.
+     * Keep the app open on screen during the trip.
+     */
+    fun startTrip() {
+        val e = elm ?: run { message.value = "Connect to your adapter first."; return }
+        if (tripJob != null) return
+        val sup = supported.value
+        val useRate = 0x5E in sup
+        val useMaf = !useRate && (sup.isEmpty() || 0x10 in sup)
+        val meter = TripMeter(System.currentTimeMillis())
+        tripLive.value = meter
+        tripJob = viewModelScope.launch {
+            try {
+                while (isActive) {
+                    try {
+                        val mph = e.readPid(Pids.byCode[0x0D]!!) ?: 0.0
+                        val gph = when {
+                            useRate -> e.readPid(Pids.byCode[0x5E]!!)
+                            useMaf -> e.readPid(Pids.byCode[0x10]!!)?.let { FuelMath.gphFromMaf(it) }
+                            else -> null
+                        }
+                        meter.feed(mph, gph, System.currentTimeMillis())
+                        tripTick.value = System.currentTimeMillis()
+                    } catch (_: ElmTimeout) { }
+                    delay(900)
+                }
+            } catch (x: IOException) {
+                onLinkLost(x)
+            }
+        }
+    }
+
+    /** Ends the trip and saves it (trips under 0.05 miles are discarded). */
+    fun stopTrip() {
+        tripJob?.cancel(); tripJob = null
+        val meter = tripLive.value ?: return
+        tripLive.value = null
+        val v = vin.value ?: return
+        if (meter.miles >= 0.05) {
+            val list = (listOf(meter.toRecord()) + trips.value).take(100)
+            trips.value = list
+            prefs.edit().putString("trips_$v", TripRecord.listToJson(list)).apply()
+            val mpg = meter.averageMpg
+            record("Trip", "%.1f mi".format(meter.miles) + (mpg?.let { ", %.1f MPG".format(it) } ?: ""), Level.Good,
+                listOf("Time: ${meter.seconds.toLong() / 60} min", "Average speed: %.0f mph".format(meter.averageMph)))
+        }
+    }
+
+    fun deleteTrip(t: TripRecord) {
+        val v = vin.value ?: return
+        trips.update { list -> list.filter { it != t }.also { prefs.edit().putString("trips_$v", TripRecord.listToJson(it)).apply() } }
+    }
+
+    /** Price per gallon, for trip cost. Blank clears it. */
+    fun setFuelPrice(text: String) {
+        val p = text.toDoubleOrNull()
+        fuelPrice.value = p
+        prefs.edit().putString("fuel_price", p?.toString()).apply()
+    }
+
+    // ---------- Alerts and widget ----------
+
+    fun setRecallAlerts(on: Boolean) {
+        recallAlerts.value = on
+        prefs.edit().putBoolean("recall_alerts", on).apply()
+    }
+
+    /** Saves the latest result for the home screen widget and refreshes it. */
+    private fun writeWidgetStatus(level: Level, headline: String) {
+        val v = vin.value ?: return
+        prefs.edit().putString("status_$v", "${level.name}|$headline|${System.currentTimeMillis()}").apply()
+        CarWidget.updateAll(getApplication())
     }
 
     // ---------- Console ----------
@@ -560,6 +1120,11 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
             catch (x: ElmTimeout) { appendLog("(no reply)") }
             catch (x: IOException) { onLinkLost(x) }
         }
+    }
+
+    companion object {
+        /** Silver, until you pick a color. */
+        const val DEFAULT_PAINT = 0xFFB9BDC3
     }
 
     /** Android calls this when the app closes: release Bluetooth. */

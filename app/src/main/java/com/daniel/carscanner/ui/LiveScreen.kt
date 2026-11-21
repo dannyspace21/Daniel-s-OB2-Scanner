@@ -29,6 +29,7 @@ import com.daniel.carscanner.obd.HealthCheck
 import com.daniel.carscanner.obd.Level
 import com.daniel.carscanner.obd.Pid
 import com.daniel.carscanner.obd.Pids
+import com.daniel.carscanner.net.Related
 import kotlin.math.abs
 
 /*
@@ -36,7 +37,8 @@ import kotlin.math.abs
  * Live gauges. Each gauge's arc turns green, amber or red based on the
  * normal ranges in Health.kt (blue = we can't judge it right now, for example
  * fuel trims before the engine is warm). Tap a gauge to see what it measures
- * and what's normal.
+ * and what's normal; if it's amber or red, the sheet also offers
+ * "Related for your car".
  */
 
 @Composable
@@ -47,6 +49,7 @@ fun LiveScreen(vm: ScannerViewModel) {
     val polling by vm.polling.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf(false) }
     var info by remember { mutableStateOf<Pid?>(null) }
+    var related by remember { mutableStateOf<Pid?>(null) }
 
     // Stop reading when you leave this screen.
     DisposableEffect(Unit) { onDispose { vm.stopPolling() } }
@@ -108,8 +111,20 @@ fun LiveScreen(vm: ScannerViewModel) {
                 Spacer(Modifier.height(16.dp))
                 Text("Normal", color = Ui.Sub, style = MaterialTheme.typography.labelMedium)
                 Text(pid.normal)
+                val v = live[pid.code]
+                val level = if (v == null) Level.Unknown else HealthCheck.levelFor(pid.code, v, state)
+                if (level == Level.Watch || level == Level.Problem) {
+                    Spacer(Modifier.height(12.dp))
+                    PrimaryButton("Related for your car", modifier = Modifier.fillMaxWidth()) { info = null; related = pid }
+                }
             }
         }
+    }
+
+    related?.let { pid ->
+        val v = live[pid.code]
+        val word = if (v != null && HealthCheck.levelFor(pid.code, v, state) == Level.Problem) "problem" else "out of range"
+        RelatedSheet(vm, topic = "${pid.name.lowercase()} $word", keywords = Related.keywordsForPid(pid.code)) { related = null }
     }
 }
 

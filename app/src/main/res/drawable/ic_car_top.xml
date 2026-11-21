@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Car seen from above, white so the widget can tint it to your paint color. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="52dp" android:height="84dp"
+    android:viewportWidth="52" android:viewportHeight="84">
+    <path android:fillColor="#FF0B0B0C" android:pathData="M3,14h5v14h-5z M44,14h5v14h-5z M3,58h5v14h-5z M44,58h5v14h-5z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M18,2 L34,2 Q46,2 46,16 L46,74 Q46,82 38,82 L14,82 Q6,82 6,74 L6,16 Q6,2 18,2 Z" />
+    <path android:fillColor="#B31C2129" android:pathData="M12,24 L40,24 L42,34 L10,34 Z" />
+    <path android:fillColor="#40000000" android:pathData="M11,34 L41,34 L41,56 L11,56 Z" />
+    <path android:fillColor="#B31C2129" android:pathData="M11,56 L41,56 L38,64 L14,64 Z" />
+</vector>

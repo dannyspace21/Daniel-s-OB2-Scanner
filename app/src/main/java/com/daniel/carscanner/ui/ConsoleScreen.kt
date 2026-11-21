@@ -55,6 +55,12 @@ fun ConsoleScreen(vm: ScannerViewModel) {
     val listState = rememberLazyListState()
     val clipboard = LocalClipboardManager.current
 
+    // Pause live view while the Console is open so your commands aren't interrupted.
+    DisposableEffect(Unit) {
+        vm.liveViewPaused.value = true
+        onDispose { vm.liveViewPaused.value = false }
+    }
+
     // Always scroll to the newest line.
     LaunchedEffect(log.size) { if (log.isNotEmpty()) listState.animateScrollToItem(log.lastIndex) }
 

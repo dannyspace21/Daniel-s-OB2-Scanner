@@ -22,7 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
  */
 
 /** Every screen in the app. */
-enum class Screen { Home, Connect, Health, Live, Codes, Modules, Tests, Console }
+enum class Screen { Home, Connect, Health, Live, Codes, Modules, Tests, Console, Vehicle, About, Garage, BodyData, History, Maintenance, Trips }
 
 @Composable
 fun AppRoot(vm: ScannerViewModel, hasPermission: Boolean, requestPermission: () -> Unit) {
@@ -42,6 +42,18 @@ fun AppRoot(vm: ScannerViewModel, hasPermission: Boolean, requestPermission: () 
     LaunchedEffect(message) {
         message?.let { snackbar.showSnackbar(it); vm.message.value = null }
     }
+    // A notification or the widget asked to open a car and screen (e.g. a new recall)
+    val openRequest by vm.openRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(openRequest) {
+        openRequest?.let { (v, screenName) ->
+            v?.let { vm.switchCar(it) }
+            val target = Screen.entries.firstOrNull { it.name == screenName } ?: Screen.Home
+            forward = true
+            stack = if (target == Screen.Home) listOf(Screen.Home) else listOf(Screen.Home, target)
+            vm.openRequest.value = null
+        }
+    }
+
     // After a successful connection, jump back Home.
     LaunchedEffect(conn) {
         if (conn is Conn.Connected && stack.last() == Screen.Connect) back()
@@ -64,8 +76,15 @@ fun AppRoot(vm: ScannerViewModel, hasPermission: Boolean, requestPermission: () 
                 Screen.Health -> HealthScreen(vm, ::back) { go(Screen.Codes) }
                 Screen.Live -> Page("Live data", ::back) { if (connected) LiveScreen(vm) else NeedsConnection { go(Screen.Connect) } }
                 Screen.Codes -> Page("Trouble codes", ::back) { if (connected) CodesScreen(vm) else NeedsConnection { go(Screen.Connect) } }
+                Screen.Vehicle -> VehicleScreen(vm, ::back) { key -> vm.testDraftVisual.value = key; go(Screen.Tests) }
+                Screen.About -> AboutScreen(vm, ::back)
+                Screen.Garage -> GarageScreen(vm, ::back) { go(Screen.Connect) }
+                Screen.BodyData -> BodyDataScreen(vm, ::back)
+                Screen.History -> HistoryScreen(vm, ::back)
+                Screen.Maintenance -> MaintenanceScreen(vm, ::back)
+                Screen.Trips -> TripScreen(vm, ::back)
                 Screen.Modules -> Page("All modules", ::back) { if (connected) ModulesScreen(vm) else NeedsConnection { go(Screen.Connect) } }
-                Screen.Tests -> Page("Active tests", ::back) { if (connected) TestsScreen(vm) else NeedsConnection { go(Screen.Connect) } }
+                Screen.Tests -> Page("Active tests", ::back) { TestsScreen(vm) }   // set up tests even when not connected
                 Screen.Console -> Page("Console", ::back) { if (connected) ConsoleScreen(vm) else NeedsConnection { go(Screen.Connect) } }
             }
         }

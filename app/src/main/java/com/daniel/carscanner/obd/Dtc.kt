@@ -72,13 +72,19 @@ object DtcDecoder {
         "U0164" to "Lost communication with climate control module",
     )
 
-    /** Plain-English description of a code. */
+    /**
+     * Plain-English description of a code. Order of preference:
+     *  1. our hand-written list above (adds bank numbers and clearer wording)
+     *  2. the built-in library of standard codes (DtcLibrary)
+     *  3. "manufacturer-specific" or a general category
+     */
     fun describe(code: String): String {
         known[code]?.let { return it }
+        DtcLibrary.lookup(code)?.let { return it }
+        if (isManufacturerSpecific(code)) return "Manufacturer-specific code. Tap Look up for what it means on your car."
         val n = code.substring(1).toIntOrNull(16) ?: 0
         return when (code[0]) {
             'P' -> when {
-                code[1] == '1' || code[1] == '3' -> "Manufacturer-specific powertrain code"
                 n in 0x0100..0x0299 -> "Fuel and air metering"
                 n in 0x0300..0x0399 -> "Ignition system or misfire"
                 n in 0x0400..0x0499 -> "Emission controls"
@@ -90,6 +96,15 @@ object DtcDecoder {
             'C' -> "Chassis (brakes, ABS, steering, suspension)"
             'B' -> "Body (airbags, climate, lighting, seats)"
             else -> "Network / module communication"
+        }
+    }
+
+    /** P1xxx, P3xxx (most), B1/B2, C1/C2 and U1/U2 codes are defined by each manufacturer. */
+    fun isManufacturerSpecific(code: String): Boolean {
+        if (code.length < 2) return false
+        return when (code[0]) {
+            'P' -> code[1] == '1' || (code[1] == '3' && DtcLibrary.lookup(code) == null)
+            else -> code[1] == '1' || code[1] == '2'
         }
     }
 }

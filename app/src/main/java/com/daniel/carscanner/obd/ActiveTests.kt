@@ -24,7 +24,34 @@ data class ActiveTest(
     val stopCommands: List<String>,
     val keepAlive: String = "3E00",      // sent every 2 s while running; blank = none
     val maxSeconds: Int = 10,
+    val visual: String = "",             // what the car drawing shows while it runs (see Visuals)
+    val vin: String = "",                // which car it belongs to (blank = any car)
 )
+
+/**
+ * Animations the car drawing can show while a test runs.
+ * Any single element (see CarState.kt), plus a few handy combinations.
+ */
+object Visuals {
+    val options: List<Pair<String, String>> = listOf(
+        "" to "Nothing",
+        "headlights" to "Both headlights",
+        "taillights" to "Both brake lights",
+        "all_doors" to "All doors",
+        "all_windows" to "All windows",
+    ) + Element.entries.map { it.key to it.label }
+
+    fun label(v: String) = options.firstOrNull { it.first == v }?.second ?: "Nothing"
+
+    /** Which elements a setting animates. */
+    fun elements(v: String): List<Element> = when (v) {
+        "headlights" -> listOf(Element.HeadlightL, Element.HeadlightR)
+        "taillights" -> listOf(Element.BrakeL, Element.BrakeR)
+        "all_doors" -> Element.doors
+        "all_windows" -> Element.windows
+        else -> listOfNotNull(Element.byKey(v))
+    }
+}
 
 /** Saves and loads your tests as a small JSON file in the app's private storage. */
 class ActiveTestStore(private val file: File) {
@@ -40,7 +67,7 @@ class ActiveTestStore(private val file: File) {
     private fun toJson(t: ActiveTest) = JSONObject()
         .put("id", t.id).put("name", t.name).put("notes", t.notes).put("header", t.header)
         .put("start", JSONArray(t.startCommands)).put("stop", JSONArray(t.stopCommands))
-        .put("keepAlive", t.keepAlive).put("maxSeconds", t.maxSeconds)
+        .put("keepAlive", t.keepAlive).put("maxSeconds", t.maxSeconds).put("visual", t.visual).put("vin", t.vin)
 
     private fun fromJson(o: JSONObject): ActiveTest {
         fun list(key: String) = o.optJSONArray(key)?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
@@ -53,6 +80,8 @@ class ActiveTestStore(private val file: File) {
             stopCommands = list("stop"),
             keepAlive = o.optString("keepAlive", ""),
             maxSeconds = o.optInt("maxSeconds", 10),
+            visual = o.optString("visual", ""),
+            vin = o.optString("vin", ""),
         )
     }
 }

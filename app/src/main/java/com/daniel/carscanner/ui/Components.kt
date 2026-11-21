@@ -8,6 +8,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.FlashlightOff
+import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -25,6 +27,7 @@ import androidx.compose.ui.unit.dp
  *   RoundAction - the round quick-action buttons on the Home screen
  *   StatusDot   - the little green / amber / red dot
  *   PrimaryButton / SecondaryButton - the two button styles
+ *   TorchButton - the flashlight button in the top corner of every screen
  */
 
 /** A full screen with a back arrow (if onBack is given) and a title. */
@@ -40,9 +43,24 @@ fun Page(title: String, onBack: (() -> Unit)?, content: @Composable () -> Unit) 
                     Icon(Icons.Filled.ChevronLeft, contentDescription = "Back", tint = Ui.Text, modifier = Modifier.size(32.dp))
                 }
             } else Spacer(Modifier.width(20.dp))
-            Text(title, style = MaterialTheme.typography.titleLarge)
+            Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            TorchButton()
         }
         Box(Modifier.weight(1f).fillMaxWidth()) { content() }
+    }
+}
+
+/** Flashlight on/off. Hidden on phones without a flash. Glows blue while on. */
+@Composable
+fun TorchButton() {
+    val torch = LocalTorch.current ?: return
+    if (!torch.available) return
+    IconButton(onClick = torch::toggle) {
+        Icon(
+            if (torch.isOn) Icons.Filled.FlashlightOn else Icons.Filled.FlashlightOff,
+            contentDescription = if (torch.isOn) "Turn flashlight off" else "Turn flashlight on",
+            tint = if (torch.isOn) Ui.Accent else Ui.Sub,
+        )
     }
 }
 

@@ -17,7 +17,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.daniel.carscanner.obd.DtcDecoder
@@ -25,7 +24,7 @@ import com.daniel.carscanner.obd.Level
 import com.daniel.carscanner.obd.Module
 import com.daniel.carscanner.obd.ModuleAddress
 import com.daniel.carscanner.obd.ModuleCode
-import java.net.URLEncoder
+import com.daniel.carscanner.net.Related
 
 /*
  * WHAT THIS FILE DOES
@@ -147,6 +146,7 @@ fun ModulesScreen(vm: ScannerViewModel) {
 private fun ModuleSheet(m: Module, idle: Boolean, vm: ScannerViewModel, onClose: () -> Unit) {
     var rename by remember(m.address) { mutableStateOf(m.name) }
     var confirmClear by remember { mutableStateOf(false) }
+    var lookup by remember { mutableStateOf<ModuleCode?>(null) }
 
     ModalBottomSheet(onDismissRequest = onClose, containerColor = Ui.Card) {
         Column(
@@ -162,7 +162,7 @@ private fun ModuleSheet(m: Module, idle: Boolean, vm: ScannerViewModel, onClose:
             when {
                 !m.readOk -> Text("This module answered but wouldn't share its codes. It may need a manufacturer-specific request.", color = Ui.Sub)
                 m.codes.isEmpty() -> Text("No codes stored.", color = Ui.Good)
-                else -> m.codes.forEach { c -> CodeRow(c); Spacer(Modifier.height(8.dp)) }
+                else -> m.codes.forEach { c -> CodeRow(c) { lookup = c }; Spacer(Modifier.height(8.dp)) }
             }
 
             if (m.isAirbag && m.codes.isNotEmpty()) {
@@ -188,6 +188,11 @@ private fun ModuleSheet(m: Module, idle: Boolean, vm: ScannerViewModel, onClose:
         }
     }
 
+    // Related for your car: the code plus the module's name, e.g. "C1241 ABS / brakes"
+    lookup?.let { c ->
+        RelatedSheet(vm, topic = "${c.code} ${m.name.removeSuffix(" (likely)")}", keywords = Related.keywordsForCode(c.code)) { lookup = null }
+    }
+
     if (confirmClear) AlertDialog(
         onDismissRequest = { confirmClear = false },
         containerColor = Ui.Card,
@@ -200,8 +205,7 @@ private fun ModuleSheet(m: Module, idle: Boolean, vm: ScannerViewModel, onClose:
 
 /** One code inside a module: code, description, how it failed, and its status. */
 @Composable
-private fun CodeRow(c: ModuleCode) {
-    val uri = LocalUriHandler.current
+private fun CodeRow(c: ModuleCode, onLookup: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Ui.Raised).padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -216,8 +220,6 @@ private fun CodeRow(c: ModuleCode) {
             c.failureText?.let { Text("Failure: $it", color = Ui.Sub, style = MaterialTheme.typography.bodySmall) }
             Text(c.stateText, color = Ui.Sub, style = MaterialTheme.typography.bodySmall)
         }
-        TextButton(onClick = {
-            uri.openUri("https://www.google.com/search?q=" + URLEncoder.encode("${c.code} code", "UTF-8"))
-        }) { Text("Look up", color = Ui.Accent) }
+        TextButton(onClick = onLookup) { Text("Look up", color = Ui.Accent) }
     }
 }

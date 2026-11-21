@@ -17,12 +17,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.daniel.carscanner.obd.Finding
 import com.daniel.carscanner.obd.HealthCheck
 import com.daniel.carscanner.obd.Level
+import com.daniel.carscanner.net.Related
 
 /*
  * WHAT THIS FILE DOES
  * Runs the health check and shows the results grouped by system.
  * Each finding is a card with a colored bar (green / amber / red).
  * Tap a card to see what it means and the most likely causes, most common first.
+ * Amber and red cards also offer "Related for your car": searches and recalls
+ * for your exact year, make and model.
  */
 
 @Composable
@@ -30,6 +33,7 @@ fun HealthScreen(vm: ScannerViewModel, onBack: () -> Unit, openCodes: () -> Unit
     val conn by vm.conn.collectAsStateWithLifecycle()
     val findings by vm.healthFindings.collectAsStateWithLifecycle()
     val progress by vm.healthProgress.collectAsStateWithLifecycle()
+    var related by remember { mutableStateOf<Finding?>(null) }
 
     Page("Health check", onBack) {
         if (conn !is Conn.Connected && findings.isEmpty()) {
@@ -69,7 +73,7 @@ fun HealthScreen(vm: ScannerViewModel, onBack: () -> Unit, openCodes: () -> Unit
                 item {
                     Text(system, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 18.dp, bottom = 2.dp))
                 }
-                items(group) { f -> FindingCard(f, if (system == HealthCheck.CODES) openCodes else null) }
+                items(group) { f -> FindingCard(f, if (system == HealthCheck.CODES) openCodes else null) { related = f } }
             }
 
             if (findings.isNotEmpty()) item {
@@ -81,11 +85,15 @@ fun HealthScreen(vm: ScannerViewModel, onBack: () -> Unit, openCodes: () -> Unit
             }
         }
     }
+
+    related?.let { f ->
+        RelatedSheet(vm, topic = f.title.lowercase(), keywords = Related.keywordsForSystem(f.system)) { related = null }
+    }
 }
 
 /** One result. Tap to expand the explanation and likely causes. */
 @Composable
-private fun FindingCard(f: Finding, onOpen: (() -> Unit)?) {
+private fun FindingCard(f: Finding, onOpen: (() -> Unit)?, onRelated: () -> Unit) {
     var open by remember { mutableStateOf(f.level == Level.Problem) }
     Row(
         Modifier.fillMaxWidth().height(IntrinsicSize.Min).clip(RoundedCornerShape(16.dp)).background(Ui.Card)
@@ -111,6 +119,11 @@ private fun FindingCard(f: Finding, onOpen: (() -> Unit)?) {
                         modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
                     f.causes.forEachIndexed { i, c ->
                         Text("${i + 1}.  $c", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 2.dp))
+                    }
+                }
+                if (f.level == Level.Watch || f.level == Level.Problem) {
+                    TextButton(onClick = onRelated, contentPadding = PaddingValues(0.dp), modifier = Modifier.padding(top = 6.dp)) {
+                        Text("Related for your car", color = Ui.Accent)
                     }
                 }
             }

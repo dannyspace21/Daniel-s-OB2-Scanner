@@ -17,6 +17,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.daniel.carscanner.obd.ActiveTest
+import com.daniel.carscanner.obd.Visuals
 
 /*
  * WHAT THIS FILE DOES
@@ -25,16 +26,28 @@ import com.daniel.carscanner.obd.ActiveTest
  *  - "Run" asks a safety question first, then runs the test with a time limit.
  *  - "Stop now" ends it early. Stop commands are always sent, even if you
  *    leave the screen or the module refuses the start command.
+ *  - "Shows on car" picks an animation for the car drawing on Home while the
+ *    test runs, e.g. headlights glowing during a headlight test.
  */
 
 @Composable
 fun TestsScreen(vm: ScannerViewModel) {
-    val tests by vm.tests.collectAsStateWithLifecycle()
+    val allTests by vm.tests.collectAsStateWithLifecycle()
+    val vin by vm.vin.collectAsStateWithLifecycle()
+    // Show this car's tests plus any older tests that aren't tied to a car
+    val tests = allTests.filter { it.vin.isBlank() || it.vin == vin }
     val running by vm.runningTest.collectAsStateWithLifecycle()
     val status by vm.testStatus.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<ActiveTest?>(null) }
     var creating by remember { mutableStateOf(false) }
     var confirmRun by remember { mutableStateOf<ActiveTest?>(null) }
+
+    // Opened from a "+" button on the Vehicle screen: start a pre-filled new test
+    val draft by vm.testDraftVisual.collectAsStateWithLifecycle()
+    var draftVisual by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(draft) {
+        draft?.let { draftVisual = it; creating = true; vm.testDraftVisual.value = null }
+    }
 
     // Leaving the screen stops any running test.
     DisposableEffect(Unit) { onDispose { vm.stopTest() } }
@@ -68,7 +81,8 @@ fun TestsScreen(vm: ScannerViewModel) {
                 if (t.notes.isNotBlank()) Text(t.notes, color = Ui.Sub)
                 Text(
                     "Module ${t.header.ifBlank { "default" }}, start ${t.startCommands.joinToString(" ")}, " +
-                        "stop ${t.stopCommands.joinToString(" ").ifBlank { "none" }}, limit ${t.maxSeconds} s",
+                        "stop ${t.stopCommands.joinToString(" ").ifBlank { "none" }}, limit ${t.maxSeconds} s" +
+                        (if (t.visual.isNotBlank()) ", shows ${Visuals.label(t.visual).lowercase()}" else ""),
                     fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, color = Ui.Sub,
                     modifier = Modifier.padding(top = 6.dp),
                 )
@@ -106,22 +120,25 @@ fun TestsScreen(vm: ScannerViewModel) {
     if (creating || editing != null) {
         TestEditor(
             initial = editing,
-            onDismiss = { creating = false; editing = null },
-            onSave = { vm.saveTest(it); creating = false; editing = null },
+            initialVisual = draftVisual,
+            onDismiss = { creating = false; editing = null; draftVisual = null },
+            onSave = { vm.saveTest(it); creating = false; editing = null; draftVisual = null },
         )
     }
 }
 
 /** The add/edit form. "Save test" is only enabled once a name and start command are filled in. */
 @Composable
-private fun TestEditor(initial: ActiveTest?, onDismiss: () -> Unit, onSave: (ActiveTest) -> Unit) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
+private fun TestEditor(initial: ActiveTest?, initialVisual: String?, onDismiss: () -> Unit, onSave: (ActiveTest) -> Unit) {
+    // A form opened from the Vehicle screen starts with that part's name and animation filled in
+    var name by remember { mutableStateOf(initial?.name ?: initialVisual?.let { Visuals.label(it) } ?: "") }
     var notes by remember { mutableStateOf(initial?.notes ?: "") }
     var header by remember { mutableStateOf(initial?.header ?: "7E0") }
     var start by remember { mutableStateOf(initial?.startCommands?.joinToString("\n") ?: "") }
     var stop by remember { mutableStateOf(initial?.stopCommands?.joinToString("\n") ?: "") }
     var keepAlive by remember { mutableStateOf(initial?.keepAlive ?: "3E00") }
     var seconds by remember { mutableStateOf((initial?.maxSeconds ?: 10).toString()) }
+    var visual by remember { mutableStateOf(initial?.visual ?: initialVisual ?: "") }
 
     fun lines(s: String) = s.lines().map { it.trim() }.filter { it.isNotEmpty() }
     val valid = name.isNotBlank() && lines(start).isNotEmpty() && (seconds.toIntOrNull() ?: 0) in 1..120
@@ -143,6 +160,17 @@ private fun TestEditor(initial: ActiveTest?, onDismiss: () -> Unit, onSave: (Act
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
                 OutlinedTextField(notes, { notes = it }, label = { Text("Notes, e.g. where the command came from") })
+                // Pick the animation the car drawing shows while the test runs
+                Text("Shows on car", color = Ui.Sub, style = MaterialTheme.typography.labelMedium)
+                Box {
+                    var open by remember { mutableStateOf(false) }
+                    SecondaryButton(Visuals.label(visual), modifier = Modifier.fillMaxWidth()) { open = true }
+                    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                        Visuals.options.forEach { (key, label) ->
+                            DropdownMenuItem(text = { Text(label) }, onClick = { visual = key; open = false })
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
@@ -152,7 +180,7 @@ private fun TestEditor(initial: ActiveTest?, onDismiss: () -> Unit, onSave: (Act
                     base.copy(
                         name = name.trim(), notes = notes.trim(), header = header.trim(),
                         startCommands = lines(start), stopCommands = lines(stop),
-                        keepAlive = keepAlive.trim(), maxSeconds = seconds.toInt(),
+                        keepAlive = keepAlive.trim(), maxSeconds = seconds.toInt(), visual = visual,
                     )
                 )
             }) { Text("Save test") }
