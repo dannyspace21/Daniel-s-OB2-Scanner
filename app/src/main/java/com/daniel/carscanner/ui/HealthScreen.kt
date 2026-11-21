@@ -1,6 +1,10 @@
 package com.daniel.carscanner.ui
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -66,9 +70,21 @@ fun HealthScreen(vm: ScannerViewModel, onBack: () -> Unit, openCodes: () -> Unit
                 }
             }
 
-            // Results grouped by system, in the same order as Home
+            // One-line tally of the results
+            if (findings.isNotEmpty() && progress == null) item {
+                val problems = findings.count { it.level == Level.Problem }
+                val watches = findings.count { it.level == Level.Watch }
+                val normal = findings.count { it.level == Level.Good }
+                Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Tally(problems, "problem" + if (problems == 1) "" else "s", Ui.Bad)
+                    Tally(watches, "to watch", Ui.Watch)
+                    Tally(normal, "normal", Ui.Good)
+                }
+            }
+
+            // Results grouped by system, in the same order as Home; worst first within each
             for (system in HealthCheck.systems) {
-                val group = findings.filter { it.system == system }
+                val group = findings.filter { it.system == system }.sortedByDescending { it.level.severity }
                 if (group.isEmpty()) continue
                 item {
                     Text(system, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 18.dp, bottom = 2.dp))
@@ -91,6 +107,16 @@ fun HealthScreen(vm: ScannerViewModel, onBack: () -> Unit, openCodes: () -> Unit
     }
 }
 
+/** "2 problems" with a colored dot. */
+@Composable
+private fun Tally(count: Int, label: String, color: androidx.compose.ui.graphics.Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        StatusDot(if (count > 0) color else Ui.Line, 10)
+        Spacer(Modifier.width(6.dp))
+        Text("$count $label", style = MaterialTheme.typography.labelLarge, color = if (count > 0) Ui.Text else Ui.Sub)
+    }
+}
+
 /** One result. Tap to expand the explanation and likely causes. */
 @Composable
 private fun FindingCard(f: Finding, onOpen: (() -> Unit)?, onRelated: () -> Unit) {
@@ -109,6 +135,12 @@ private fun FindingCard(f: Finding, onOpen: (() -> Unit)?, onRelated: () -> Unit
                     when (f.level) { Level.Good -> "Normal"; Level.Watch -> "Watch"; Level.Problem -> "Problem"; Level.Unknown -> "Info" },
                     color = f.level.color, style = MaterialTheme.typography.labelMedium,
                 )
+                // Arrow shows the card opens; it turns when open
+                if (onOpen == null) {
+                    val turn by animateFloatAsState(if (open) 180f else 0f, label = "chevron")
+                    Icon(Icons.Filled.ExpandMore, contentDescription = if (open) "Show less" else "Show more",
+                        tint = Ui.Sub, modifier = Modifier.padding(start = 4.dp).size(20.dp).rotate(turn))
+                }
             }
             if (f.reading.isNotBlank()) Text(f.reading, color = Ui.Sub, style = MaterialTheme.typography.bodySmall)
             if (open) {
