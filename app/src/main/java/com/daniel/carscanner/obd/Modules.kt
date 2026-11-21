@@ -190,6 +190,24 @@ class ModuleScanner(private val elm: ElmClient) {
         else -> null
     }
 
+    /**
+     * Reads one block of data from a module (e.g. 2180 on a Toyota body computer).
+     * Returns the raw reply lines (empty if silent). Read-only.
+     */
+    suspend fun readLines(a: ModuleAddress, request: String, timeout: Long = 1_500): List<String> =
+        if (!target(a)) emptyList() else ask(request, timeout)
+
+    /**
+     * Puts the adapter back to normal addressing after reading from modules, so engine
+     * reads and other jobs work again. Keeps the scan's short timeouts (call end() for those).
+     */
+    suspend fun release() {
+        runCatching { elm.send("ATCRA", quiet = true) }
+        if (currentExt != null) runCatching { elm.send("ATCEA", quiet = true) }
+        runCatching { elm.send(elm.resetHeaderCommand(), quiet = true) }
+        currentExt = null
+    }
+
     /** "Are you there?" Any reply at all, even a refusal, means a module lives here. */
     suspend fun probe(a: ModuleAddress): Boolean = target(a) && ask("3E00").isNotEmpty()
 

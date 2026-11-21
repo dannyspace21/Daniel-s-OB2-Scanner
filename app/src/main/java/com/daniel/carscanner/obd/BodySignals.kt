@@ -34,7 +34,26 @@ data class BodySignal(
     val fast: Boolean = false,
     val rawMin: Int = 0,
     val rawMax: Int = 255,
+    val ext: Int? = null,               // sub-address on the Toyota/Lexus body network (e.g. 0x40), else null
 ) {
+    /** Where to send the request, for modules reached by sub-address. */
+    val address: ModuleAddress?
+        get() = ext?.let { e -> header.replace(" ", "").toIntOrNull(16)?.let { ModuleAddress(it, it + 8, e) } }
+
+    /** Reads this signal's value (0..1) from reply bytes already cleaned up by Learn.payload. */
+    fun decodeBytes(bytes: List<Int>): Float? {
+        if (byteIndex !in bytes.indices) return null
+        val b = bytes[byteIndex]
+        return if (bit in 0..7) {
+            val on = ((b shr bit) and 1 == 1) != invert
+            if (on) 1f else 0f
+        } else {
+            val span = (rawMax - rawMin).takeIf { it != 0 } ?: return null
+            val f = ((b - rawMin).toFloat() / span).coerceIn(0f, 1f)
+            if (invert) 1f - f else f
+        }
+    }
+
     /** Reads this signal's value (0..1) out of a reply, or null if the reply doesn't contain it. */
     fun decode(reply: String): Float? {
         val line = Hex.dataLines(reply).firstOrNull { !it.startsWith("7F") } ?: return null
@@ -53,7 +72,8 @@ data class BodySignal(
 
     /** Short description for lists, e.g. "750 / 2121, byte 4, bit 2". */
     val where: String
-        get() = "$header / $command, byte $byteIndex, " + if (bit in 0..7) "bit $bit" else "whole byte"
+        get() = header + (ext?.let { "/%02X".format(it) } ?: "") + " / $command, byte $byteIndex, " +
+            if (bit in 0..7) "bit $bit" else "whole byte"
 }
 
 /** Saves and loads body signals for all cars in one small file. */
@@ -70,6 +90,7 @@ class BodySignalStore(private val file: File) {
                     byteIndex = o.optInt("byteIndex", 0), bit = o.optInt("bit", 0),
                     invert = o.optBoolean("invert", false), failure = o.optBoolean("failure", false),
                     fast = o.optBoolean("fast", false), rawMin = o.optInt("rawMin", 0), rawMax = o.optInt("rawMax", 255),
+                    ext = o.optInt("ext", -1).takeIf { it >= 0 },
                 )
             }
         }
@@ -80,6 +101,7 @@ class BodySignalStore(private val file: File) {
             JSONObject().put("id", s.id).put("vin", s.vin).put("element", s.element.key).put("header", s.header)
                 .put("command", s.command).put("byteIndex", s.byteIndex).put("bit", s.bit).put("invert", s.invert)
                 .put("failure", s.failure).put("fast", s.fast).put("rawMin", s.rawMin).put("rawMax", s.rawMax)
+                .put("ext", s.ext ?: -1)
         }).toString(2))
     }
 }

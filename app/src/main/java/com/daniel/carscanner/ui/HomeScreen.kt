@@ -151,7 +151,7 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
                 }
             }
             if (live && mySignals == 0) Text(
-                "Live view shows engine running for now. Set up body data to mirror doors, lights and more.",
+                "Live view shows engine running for now. Tap here to set up doors, brake lights and more automatically.",
                 color = Ui.Sub, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 12.dp)
                     .clickable { go(Screen.BodyData) },
             )

@@ -48,6 +48,8 @@ fun BodyDataScreen(vm: ScannerViewModel, onBack: () -> Unit) {
     var editing by remember { mutableStateOf<BodySignal?>(null) }
     var creating by remember { mutableStateOf(false) }
     val mine = all.filter { it.vin == vin }
+    // Nothing set up yet and connected: open automatic setup straight away.
+    var learning by remember { mutableStateOf(mine.isEmpty() && conn is Conn.Connected) }
 
     Page("Body data", onBack) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -58,14 +60,18 @@ fun BodyDataScreen(vm: ScannerViewModel, onBack: () -> Unit) {
                     color = Ui.Sub,
                 )
                 Spacer(Modifier.height(12.dp))
+                PrimaryButton("Set up automatically", enabled = vin != null, modifier = Modifier.fillMaxWidth()) { learning = true }
+                Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PrimaryButton("Add signal", enabled = vin != null, modifier = Modifier.weight(1f)) { creating = true }
+                    SecondaryButton("Add manually", enabled = vin != null, modifier = Modifier.weight(1f)) { creating = true }
                     if (conn is Conn.Connected) SecondaryButton(if (live) "Stop live view" else "Start live view", modifier = Modifier.weight(1f)) { vm.setLiveView(!live) }
                 }
                 if (vin == null) Text("Add a car to your garage first.", color = Ui.Sub, modifier = Modifier.padding(top = 8.dp))
             }
             if (mine.isEmpty() && vin != null) item {
-                Text("How to find a signal", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+                Text("Tap Set up automatically: the app finds your doors, brake lights and more while you open, press and switch things. No codes needed.",
+                    modifier = Modifier.padding(top = 8.dp))
+                Text("Or by hand", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
                 Text(
                     "1. Get the module address and request from Techstream's data list for your car, or from an owner forum.\n" +
                         "2. Tap Add signal, enter them, and tap Watch.\n" +
@@ -101,6 +107,8 @@ fun BodyDataScreen(vm: ScannerViewModel, onBack: () -> Unit) {
             }
         }
     }
+
+    if (learning) LearnSheet(vm) { learning = false }
 
     if (creating || editing != null) {
         SignalEditor(vm, start = editing, vin = vin ?: "") { creating = false; editing = null }

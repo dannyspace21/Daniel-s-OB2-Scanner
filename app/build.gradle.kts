@@ -83,4 +83,5 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")   // daily background recall check
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")   // real JSON for unit tests (Android's is a stub there)
 }

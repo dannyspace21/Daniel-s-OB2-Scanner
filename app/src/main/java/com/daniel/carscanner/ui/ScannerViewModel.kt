@@ -45,6 +45,9 @@ import com.daniel.carscanner.data.Maintenance
 import com.daniel.carscanner.obd.BlinkTracker
 import com.daniel.carscanner.obd.BodySignal
 import com.daniel.carscanner.obd.BodySignalStore
+import com.daniel.carscanner.obd.DataSource
+import com.daniel.carscanner.obd.Learn
+import com.daniel.carscanner.obd.LearnStep
 import com.daniel.carscanner.obd.CarState
 import com.daniel.carscanner.obd.Element
 import com.daniel.carscanner.obd.Readiness
@@ -118,6 +121,19 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     val log = MutableStateFlow<List<String>>(emptyList())
 
     val vin = MutableStateFlow<String?>(null)
+
+    // Automatic live-view setup (declared before init, which loads the last car)
+    /** Data blocks found in the current car's modules (saved per car). */
+    val learnSources = MutableStateFlow<List<DataSource>>(emptyList())
+    /** What setup is doing right now ("Reading module 750/40…"), or null when idle. */
+    val learnStatus = MutableStateFlow<String?>(null)
+    val learnProgress = MutableStateFlow(0f)
+    /** The part being learned and which instruction is showing (0 = off, 1 = on, 2 = off again). */
+    val learnActive = MutableStateFlow<Pair<LearnStep, Int>?>(null)
+    /** The last result: step id to a message ("Found it" or why not). */
+    val learnResult = MutableStateFlow<Pair<String, String>?>(null)
+    private var learnJob: Job? = null
+    private val learnReads = mutableMapOf<Int, MutableList<Map<DataSource, List<Int>>>>()
     val supported = MutableStateFlow<Set<Int>>(emptySet())
     val selectedPids = MutableStateFlow(setOf(0x0C, 0x05, 0x42, 0x0D, 0x11, 0x04))
     val live = MutableStateFlow<Map<Int, Double>>(emptyMap())
@@ -702,6 +718,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
         if (garage.value.none { it.vin == v }) saveGarage(garage.value + GarageCar(v))
         maintenance.value = Maintenance.fromJson(prefs.getString("maint_$v", null)) ?: Maintenance.defaults()
         trips.value = TripRecord.listFromJson(prefs.getString("trips_$v", null))
+        learnSources.value = Learn.sourcesFromJson(prefs.getString("learn_sources_$v", null))
         returnedCodes.value = emptyList()
         CarWidget.updateAll(getApplication())
         carState.value = CarState()
@@ -893,6 +910,169 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     private fun isReadRequest(header: String, command: String): Boolean =
         Safety.readRequestProblem(header, command) == null
 
+    // ---------- Automatic setup: find body data, then learn each part ----------
+
+    /**
+     * Step 1 of automatic setup: finds every block of data the car's modules share.
+     * Knocks on every module (including the Toyota/Lexus body network), then asks each
+     * one for every data block. Read-only. Takes a few minutes, once per car.
+     */
+    fun findBodyData() {
+        val e = elm ?: run { message.value = "Connect to your adapter first."; return }
+        val v = vin.value ?: run { message.value = "Add your car first (connect once so it reads the VIN)."; return }
+        if (!e.isCan) { message.value = "Automatic setup needs a CAN car (most cars from 2008 on)."; return }
+        if (learnJob != null || moduleJob != null || healthJob != null || testJob != null || busy.value != null) return
+        stopPolling()
+        setLiveView(false)
+        learnResult.value = null
+        learnJob = viewModelScope.launch {
+            val scanner = ModuleScanner(e)
+            val found = mutableListOf<DataSource>()
+            try { e.exclusive {
+                scanner.begin()
+                // Which modules to read: from a module scan if there was one, else knock on every address now.
+                val make = vehicle.value?.make?.uppercase()
+                val deep = make == null || make in setOf("TOYOTA", "LEXUS", "SCION")
+                val known = modules.value.map { it.address }
+                val addresses = (if (known.isNotEmpty() && (!deep || known.any { it.ext != null })) known else {
+                    val all = ModuleScanner.addresses(e.isCan29, deep)
+                    val alive = mutableListOf<ModuleAddress>()
+                    all.forEachIndexed { i, a ->
+                        learnStatus.value = "Finding your car's computers, ${alive.size} found"
+                        learnProgress.value = 0.35f * i / all.size
+                        if (scanner.probe(a)) alive += a
+                    }
+                    alive
+                }).filter { !it.is29 && !Learn.skip(it) }
+
+                // Ask each module for every data block. Toyota-style modules first (21xx);
+                // if no module answers those, try the UDS range (22xxxx).
+                suspend fun sweep(requestsFor: suspend (ModuleAddress) -> List<String>, from: Float, to: Float) {
+                    addresses.forEachIndexed { i, a ->
+                        val requests = requestsFor(a)
+                        requests.forEachIndexed { j, r ->
+                            learnStatus.value = "Reading module ${a.label} (${i + 1} of ${addresses.size}), ${found.size} data blocks found"
+                            learnProgress.value = from + (to - from) * (i + j.toFloat() / requests.size.coerceAtLeast(1)) / addresses.size.coerceAtLeast(1)
+                            val bytes = Learn.payload(scanner.readLines(a, r, 1_000), r)
+                            if (bytes != null && bytes.size > r.length / 2) found += DataSource(a, r)
+                        }
+                    }
+                }
+                sweep({ a ->
+                    val test = scanner.readLines(a, "2101", 1_000)
+                    if (test.isEmpty() || Learn.serviceUnsupported(test, "2101")) emptyList() else Learn.kwpRequests
+                }, 0.35f, 0.9f)
+                if (found.isEmpty()) sweep({ a ->
+                    val test = scanner.readLines(a, "220100", 1_000)
+                    if (test.isEmpty() || Learn.serviceUnsupported(test, "220100")) emptyList() else Learn.udsRequests
+                }, 0.9f, 1f)
+
+                prefs.edit().putString("learn_sources_$v", Learn.sourcesToJson(found)).apply()
+                learnSources.value = found.toList()
+                message.value = if (found.isEmpty())
+                    "Your car's modules didn't share any data blocks. Cheap adapters often can't reach them; an OBDLink MX+ or Vgate iCar Pro usually can."
+                else "Found ${found.size} data blocks. Now teach each part."
+            } } catch (x: IOException) {
+                onLinkLost(x)
+            } finally {
+                withContext(NonCancellable) { runCatching { scanner.end() } }
+                learnStatus.value = null
+                learnJob = null
+            }
+        }
+    }
+
+    /** Starts teaching one part: shows its first instruction ("Close the driver door"). */
+    fun startLearning(step: LearnStep) {
+        if (learnJob != null) return
+        learnReads.clear()
+        learnResult.value = null
+        learnActive.value = step to 0
+    }
+
+    fun cancelLearning() {
+        learnJob?.cancel()
+        learnActive.value = null
+        learnReads.clear()
+    }
+
+    /**
+     * You did what the instruction said and tapped Next: read every data block a few times,
+     * then move to the next instruction. After the last one, find the bit and save it.
+     */
+    fun learnNext() {
+        val e = elm ?: run { message.value = "Connect to your adapter first."; return }
+        val (step, phase) = learnActive.value ?: return
+        val sources = learnSources.value
+        if (learnJob != null || sources.isEmpty()) return
+        stopPolling()
+        setLiveView(false)
+        learnJob = viewModelScope.launch {
+            try {
+                // More readings while "off" weed out bits that change on their own; blinking parts need several "on" readings.
+                val rounds = when (phase) { 0 -> 3; 1 -> if (step.blinks) 5 else 2; else -> 2 }
+                val list = learnReads.getOrPut(phase) { mutableListOf() }
+                repeat(rounds) { r ->
+                    learnStatus.value = "Reading (${r + 1} of $rounds)…"
+                    list += readAll(e, sources)
+                }
+                if (phase < 2) learnActive.value = step to phase + 1
+                else finishLearning(step, sources)
+            } catch (x: IOException) {
+                learnActive.value = null
+                onLinkLost(x)
+            } finally {
+                learnStatus.value = null
+                learnJob = null
+            }
+        }
+    }
+
+    /** Reads every data block once. */
+    private suspend fun readAll(e: ElmClient, sources: List<DataSource>): Map<DataSource, List<Int>> = e.exclusive {
+        val scanner = ModuleScanner(e)
+        val out = mutableMapOf<DataSource, List<Int>>()
+        try {
+            scanner.begin()
+            for (s in sources) Learn.payload(scanner.readLines(s.address, s.request, 1_000), s.request)?.let { out[s] = it }
+        } finally {
+            withContext(NonCancellable) { runCatching { scanner.end() } }
+        }
+        out
+    }
+
+    /** Compares the readings, picks the bit that followed what you did, and saves it. */
+    private fun finishLearning(step: LearnStep, sources: List<DataSource>) {
+        val v = vin.value ?: return
+        val mine = allSignals.value.filter { it.vin == v && it.element !in step.elements }
+        val hits = mutableListOf<Pair<DataSource, com.daniel.carscanner.obd.FoundBit>>()
+        for (s in sources) {
+            fun reads(p: Int) = learnReads[p].orEmpty().mapNotNull { it[s] }
+            val found = Learn.candidates(reads(0), reads(1), reads(2), step.blinks)
+            val header = "%03X".format(s.address.request)
+            // Skip bits already taught to another part (e.g. a door bit when learning the interior light).
+            hits += found.filter { b ->
+                mine.none { it.header == header && it.ext == s.address.ext && it.command == s.request && it.byteIndex == b.byteIndex && it.bit == b.bit }
+            }.map { s to it }
+        }
+        learnActive.value = null
+        learnReads.clear()
+        if (hits.isEmpty()) {
+            learnResult.value = step.id to "Couldn't find it. Make sure each step was done before tapping Next, then try again. Some cars don't share this one."
+            return
+        }
+        // Prefer the body network (where doors and lights usually live), then the first match.
+        val (src, b) = hits.firstOrNull { it.first.address.ext != null } ?: hits.first()
+        val header = "%03X".format(src.address.request)
+        allSignals.update { list ->
+            (list.filter { !(it.vin == v && it.element in step.elements) } + step.elements.map { el ->
+                BodySignal(vin = v, element = el, header = header, command = src.request, byteIndex = b.byteIndex,
+                    bit = b.bit, invert = b.invert, fast = step.blinks, ext = src.address.ext)
+            }).also(signalStore::save)
+        }
+        learnResult.value = step.id to (if (hits.size == 1) "Found it." else "Found it (best of ${hits.size} matches). If it looks wrong in live view, learn it again.")
+    }
+
     fun deleteSignal(id: String) { allSignals.update { list -> list.filter { it.id != id }.also(signalStore::save) } }
 
     /** Turns live view on or off. While on, the drawing mirrors the real car. */
@@ -926,7 +1106,21 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
                     val failed = mutableSetOf<Element>()
                     val failedChecked = mutableSetOf<Element>()
                     e.exclusive {
-                        for ((key, group) in due.groupBy { it.header to it.command }) {
+                        // Signals on the Toyota/Lexus body network need the module's sub-address.
+                        val (viaAddress, plain) = due.partition { it.address != null }
+                        if (viaAddress.isNotEmpty()) {
+                            val scanner = ModuleScanner(e)
+                            try {
+                                for ((key, group) in viaAddress.groupBy { it.address!! to it.command }) {
+                                    val bytes = Learn.payload(scanner.readLines(key.first, key.second), key.second) ?: continue
+                                    for (s in group) s.decodeBytes(bytes)?.let { value ->
+                                        if (s.failure) { failedChecked += s.element; if (value > 0.5f) failed += s.element }
+                                        else read[s.element] = value
+                                    }
+                                }
+                            } finally { scanner.release() }
+                        }
+                        for ((key, group) in plain.groupBy { it.header to it.command }) {
                             try {
                                 e.send("ATSH" + key.first.replace(" ", ""), quiet = true)
                                 val reply = e.send(key.second, 1_500, quiet = true)
@@ -936,7 +1130,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
                                 }
                             } catch (_: ElmTimeout) { }
                         }
-                        if (due.isNotEmpty()) e.send(e.resetHeaderCommand(), quiet = true)
+                        if (plain.isNotEmpty()) e.send(e.resetHeaderCommand(), quiet = true)
                         if (cycle % 10 == 0) {
                             try { e.readPid(Pids.byCode[0x0C]!!)?.let { read[Element.Engine] = if (it > 300) 1f else 0f } } catch (_: ElmTimeout) { }
                         }
