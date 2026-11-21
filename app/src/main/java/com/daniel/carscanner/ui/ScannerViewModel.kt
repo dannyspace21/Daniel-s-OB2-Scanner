@@ -110,6 +110,8 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
 
     val conn = MutableStateFlow<Conn>(Conn.Disconnected)
     val devices = MutableStateFlow<List<DeviceItem>>(emptyList())
+    /** The device a failed connection was for, so "Try again" knows what to retry. */
+    var lastAttempt: DeviceItem? = null; private set
     val scanning = MutableStateFlow(false)
     val message = MutableStateFlow<String?>(null)
     val busy = MutableStateFlow<String?>(null)
@@ -148,6 +150,8 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
 
     // Vehicle details, recalls and drawing (from NHTSA; cached on the phone so they show offline)
     private val prefs = app.getSharedPreferences("vehicle", 0)
+    /** The adapter you connected to last time, so Connect can offer one-tap Reconnect. */
+    val lastAdapter = MutableStateFlow(prefs.getString("last_adapter", null))
     val vehicle = MutableStateFlow<VehicleInfo?>(null)
     val recalls = MutableStateFlow<List<Recall>>(emptyList())
     val vehicleStatus = MutableStateFlow<String?>(null)        // "Looking up…" or an error, else null
@@ -270,6 +274,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     fun connect(item: DeviceItem) {
         if (conn.value is Conn.Connecting || conn.value is Conn.Connected) return
         stopBleScan()
+        lastAttempt = item
         viewModelScope.launch {
             conn.value = Conn.Connecting(item.name)
             val t = if (item.ble) BleTransport(getApplication(), item.device) else ClassicTransport(item.device, adapter)
@@ -280,6 +285,8 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
                 transport = t
                 elm = client
                 conn.value = Conn.Connected(item.name, version, client.protocolName)
+                prefs.edit().putString("last_adapter", item.address).apply()
+                lastAdapter.value = item.address
                 supported.value = runCatching { client.supportedPids() }.getOrDefault(emptySet())
                 runCatching { client.readVin() }.getOrNull()?.let { setVin(it) }
                 markSeen()   // update "last connected" in the garage

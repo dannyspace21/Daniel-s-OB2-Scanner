@@ -1,5 +1,7 @@
 package com.daniel.carscanner.ui
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -13,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -30,6 +33,13 @@ fun ConnectScreen(vm: ScannerViewModel, hasPermission: Boolean, requestPermissio
     val devices by vm.devices.collectAsStateWithLifecycle()
     val scanning by vm.scanning.collectAsStateWithLifecycle()
     val vin by vm.vin.collectAsStateWithLifecycle()
+    val lastAddress by vm.lastAdapter.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    /** Opens Android's Bluetooth page (to turn it on or pair a Classic adapter). */
+    fun openBluetoothSettings() { runCatching { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) } }
+    // Your last adapter first, then ones that look like OBD adapters, then everything else.
+    val sorted = devices.sortedWith(compareBy<DeviceItem>({ it.address != lastAddress }, { !it.looksLikeObd }, { it.name.lowercase() }))
+    val last = sorted.firstOrNull { it.address == lastAddress }
 
     Page("Adapter", onBack) {
         LazyColumn(
@@ -65,15 +75,32 @@ fun ConnectScreen(vm: ScannerViewModel, hasPermission: Boolean, requestPermissio
                         Spacer(Modifier.width(14.dp))
                         Text("Connecting to ${c.name}. Up to 15 seconds while it finds your car's protocol.", color = Ui.Sub)
                     }
-                    is Conn.Failed -> Column(Modifier.padding(vertical = 4.dp)) {
+                    is Conn.Failed -> Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Ui.Card).padding(20.dp)) {
                         Text("Couldn't connect", color = Ui.Bad, style = MaterialTheme.typography.titleMedium)
-                        Text(c.reason, color = Ui.Sub)
+                        Text(c.reason, color = Ui.Sub, modifier = Modifier.padding(top = 4.dp))
+                        Text(
+                            "Check: adapter plugged in and its light on, ignition on, and no other app connected to it.",
+                            color = Ui.Sub, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp),
+                        )
+                        vm.lastAttempt?.let { d ->
+                            Spacer(Modifier.height(14.dp))
+                            PrimaryButton("Try again", modifier = Modifier.fillMaxWidth()) { vm.connect(d) }
+                        }
                     }
                     Conn.Disconnected -> Text(
                         "Plug the adapter in under the dash and turn the ignition on. Classic adapters must be paired in " +
                             "Android Bluetooth settings first (PIN is usually 1234 or 0000). BLE adapters don't need pairing.",
                         color = Ui.Sub,
                     )
+                }
+            }
+
+            // One-tap reconnect to the adapter you used last time
+            if (last != null && (conn is Conn.Disconnected || conn is Conn.Failed)) item {
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Ui.Card).padding(20.dp)) {
+                    Text("Last used", color = Ui.Sub, style = MaterialTheme.typography.labelMedium)
+                    Text(last.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 2.dp, bottom = 14.dp))
+                    PrimaryButton("Reconnect", enabled = hasPermission, modifier = Modifier.fillMaxWidth()) { vm.connect(last) }
                 }
             }
 
@@ -85,14 +112,23 @@ fun ConnectScreen(vm: ScannerViewModel, hasPermission: Boolean, requestPermissio
                         }
                         SecondaryButton("Refresh", enabled = hasPermission, modifier = Modifier.weight(1f), onClick = vm::refreshDevices)
                     }
-                    if (hasPermission && !vm.bluetoothOn) Text("Bluetooth is off. Turn it on in quick settings.", color = Ui.Bad)
+                    if (hasPermission && !vm.bluetoothOn) {
+                        Text("Bluetooth is off.", color = Ui.Bad)
+                        TextButton(onClick = { openBluetoothSettings() }) { Text("Turn on Bluetooth", color = Ui.Accent) }
+                    }
                 }
-                if (devices.isEmpty()) item { Text("No adapters found yet.", color = Ui.Sub) }
-                items(devices, key = { it.address + it.ble }) { d ->
+                if (devices.isEmpty()) item {
+                    Column {
+                        Text("No adapters found yet.", color = Ui.Sub)
+                        TextButton(onClick = { openBluetoothSettings() }) { Text("Pair a Classic adapter in Bluetooth settings", color = Ui.Accent) }
+                    }
+                }
+                items(sorted, key = { it.address + it.ble }) { d ->
                     NavRow(
                         icon = Icons.Filled.Bluetooth,
                         title = d.name,
-                        subtitle = (if (d.ble) "BLE" else if (d.paired) "Paired" else "Classic") + ", " + d.address,
+                        subtitle = (if (d.address == lastAddress) "Last used · " else "") +
+                            (if (d.ble) "BLE" else if (d.paired) "Paired" else "Classic") + ", " + d.address,
                         dot = if (d.looksLikeObd) Ui.Accent else null,
                     ) { if (conn !is Conn.Connecting) vm.connect(d) }
                 }
