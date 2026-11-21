@@ -103,6 +103,9 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
             }
         }
 
+        // A newer build is on GitHub
+        item { UpdateCard(vm) }
+
         // The car. Tap to open Vehicle details.
         item {
             Box(

@@ -46,6 +46,9 @@ import com.daniel.carscanner.obd.BlinkTracker
 import com.daniel.carscanner.obd.BodySignal
 import com.daniel.carscanner.obd.BodySignalStore
 import com.daniel.carscanner.obd.DataSource
+import com.daniel.carscanner.BuildConfig
+import com.daniel.carscanner.net.UpdateInfo
+import com.daniel.carscanner.net.Updater
 import com.daniel.carscanner.obd.Learn
 import com.daniel.carscanner.obd.LearnStep
 import com.daniel.carscanner.obd.CarState
@@ -909,6 +912,60 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     /** True for a valid module address plus a request that only reads (safe to repeat forever). */
     private fun isReadRequest(header: String, command: String): Boolean =
         Safety.readRequestProblem(header, command) == null
+
+    // ---------- In-app updates (from the app's GitHub releases) ----------
+
+    /** info = a newer build is available; progress = downloading; note = a message for you. */
+    data class UpdateUi(val info: UpdateInfo? = null, val progress: Float? = null, val note: String? = null, val checking: Boolean = false)
+    val update = MutableStateFlow(UpdateUi())
+    private var updateJob: Job? = null
+
+    /** Asks GitHub for a newer build. Quiet on app start; manual checks say "up to date" or why it failed. */
+    fun checkForUpdate(manual: Boolean) {
+        if (updateJob != null) return
+        updateJob = viewModelScope.launch {
+            update.update { it.copy(checking = true, note = null) }
+            try {
+                val info = withContext(Dispatchers.IO) { Updater.check(BuildConfig.VERSION_CODE) }
+                update.update {
+                    it.copy(info = info, checking = false,
+                        note = if (info == null && manual) "You're on the newest version." else null)
+                }
+            } catch (e: Exception) {
+                update.update { it.copy(checking = false, note = if (manual) "Couldn't check for updates. Are you online?" else null) }
+            } finally { updateJob = null }
+        }
+    }
+
+    /** Downloads the newer build, checks it's signed with this app's key, and opens Android's installer. */
+    fun installUpdate() {
+        val info = update.value.info ?: return
+        val ctx = getApplication<Application>()
+        if (!Updater.canInstall(ctx)) {
+            update.update { it.copy(note = "Turn on \"Allow from this source\" for this app, then come back and tap Update again.") }
+            runCatching { Updater.openInstallPermission(ctx) }
+            return
+        }
+        if (updateJob != null) return
+        updateJob = viewModelScope.launch {
+            update.update { it.copy(progress = 0f, note = null) }
+            try {
+                val apk = withContext(Dispatchers.IO) {
+                    Updater.download(ctx, info) { p -> update.update { u -> u.copy(progress = p) } }
+                }
+                val ok = withContext(Dispatchers.IO) { Updater.isSignedLikeThisApp(ctx, apk) }
+                if (!ok) {
+                    apk.delete()
+                    update.update { it.copy(progress = null, note = "The download wasn't signed with this app's key, so it was not installed.") }
+                } else {
+                    update.update { it.copy(progress = null, note = "Tap Install on the next screen.") }
+                    Updater.install(ctx, apk)
+                }
+            } catch (e: Exception) {
+                update.update { it.copy(progress = null, note = "Download failed: ${e.message ?: "unknown error"}. Try again.") }
+            } finally { updateJob = null }
+        }
+    }
 
     // ---------- Automatic setup: find body data, then learn each part ----------
 

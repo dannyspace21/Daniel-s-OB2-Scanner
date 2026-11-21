@@ -20,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -132,6 +133,39 @@ fun RoundAction(icon: ImageVector, label: String, enabled: Boolean = true, onDis
         }
         Spacer(Modifier.height(8.dp))
         Text(label, style = MaterialTheme.typography.labelMedium, color = if (enabled) Ui.Text else Ui.Sub)
+    }
+}
+
+/**
+ * "Update available" card: shows the new build, a download bar while it downloads,
+ * and any message (like "Tap Install on the next screen").
+ */
+@Composable
+fun UpdateCard(vm: ScannerViewModel) {
+    val u by vm.update.collectAsStateWithLifecycle()
+    val info = u.info ?: return
+    Column(
+        Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(16.dp)).background(Ui.Card).padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(Ui.Accent, 10)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Update available", style = MaterialTheme.typography.titleMedium)
+                Text(info.name, color = Ui.Sub, style = MaterialTheme.typography.bodySmall)
+            }
+            if (u.progress == null) PrimaryButton("Update", onClick = vm::installUpdate)
+        }
+        u.progress?.let { p ->
+            Spacer(Modifier.height(12.dp))
+            LinearProgressIndicator(
+                progress = { p }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                color = Ui.Accent, trackColor = Ui.Raised,
+            )
+            Text("Downloading ${(p * 100).toInt()}%", color = Ui.Sub, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 6.dp))
+        }
+        u.note?.let { Text(it, color = Ui.Sub, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
     }
 }
 

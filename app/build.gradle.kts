@@ -26,8 +26,11 @@ android {
         applicationId = "com.daniel.carscanner"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "2.3.0"
+        // Every GitHub build gets the next build number, so the app can tell when a newer one exists.
+        // Local builds use 8, which is lower, so they never block an update from GitHub.
+        val buildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+        versionCode = buildNumber ?: 8
+        versionName = "2.4." + (buildNumber?.toString() ?: "local")
         // Build date shown on the About screen
         buildConfigField("String", "BUILD_DATE", "\"${LocalDate.now()}\"")
     }

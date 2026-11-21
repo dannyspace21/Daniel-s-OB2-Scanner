@@ -8,6 +8,9 @@
     <!-- Internet: VIN decoding and recalls from NHTSA, and opening links you tap -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- In-app updates: lets the app open Android's installer for a downloaded update (you still confirm) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Notifications: recall alerts and returning codes (Android 13+ asks you first) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -38,6 +41,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Hands a downloaded update to Android's installer (app-private files only) -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
+        </provider>
 
         <!-- Home screen widget -->
         <receiver

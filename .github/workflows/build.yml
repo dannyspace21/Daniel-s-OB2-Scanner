@@ -78,3 +78,33 @@ jobs:
         with:
           name: DanielsCarMechanicScanner-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+  # Publishes each signed build from main as a GitHub Release ("build-<number>"),
+  # which the app checks on start to offer "Update available".
+  # Only this job can write to the repo, and only for pushes to main.
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: DanielsCarMechanicScanner-apk
+
+      - name: Publish release for in-app updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.run_number }}
+          SHA: ${{ github.sha }}
+          NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          APK="DanielsCarMechanicScanner-build-$RUN.apk"
+          mv app-debug.apk "$APK"
+          gh release create "build-$RUN" "$APK" --target "$SHA" --title "Build $RUN" --notes "$NOTES" --latest
+          # Keep only the 10 newest builds.
+          gh release list --limit 100 --json tagName --jq '.[10:][].tagName' | while read -r tag; do
+            gh release delete "$tag" --cleanup-tag --yes
+          done

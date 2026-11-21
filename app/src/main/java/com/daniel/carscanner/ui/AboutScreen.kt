@@ -50,6 +50,17 @@ fun AboutScreen(vm: ScannerViewModel, onBack: () -> Unit) {
                 }
             }
 
+            // Updates from GitHub
+            item {
+                val u by vm.update.collectAsStateWithLifecycle()
+                Section("Updates")
+                if (u.info != null) UpdateCard(vm) else {
+                    SecondaryButton(if (u.checking) "Checking…" else "Check for updates", enabled = !u.checking,
+                        modifier = Modifier.fillMaxWidth()) { vm.checkForUpdate(manual = true) }
+                    u.note?.let { Text(it, color = Ui.Sub, modifier = Modifier.padding(top = 8.dp)) }
+                }
+            }
+
             // Appearance
             item {
                 Section("Appearance")
@@ -103,7 +114,7 @@ fun AboutScreen(vm: ScannerViewModel, onBack: () -> Unit) {
             item {
                 Section("Privacy")
                 Para("The app uses the internet only to decode your VIN and look up recalls with NHTSA (the U.S. government), " +
-                    "and to open links you tap. There are no accounts, ads or tracking. Your scans, tests and settings stay on this phone.")
+                    "to check this app's GitHub page for updates, and to open links you tap. There are no accounts, ads or tracking. Your scans, tests and settings stay on this phone.")
             }
 
             item {

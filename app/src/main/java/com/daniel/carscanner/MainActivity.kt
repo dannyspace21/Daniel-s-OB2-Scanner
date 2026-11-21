@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity() {
         // Daily recall check (runs in the background even when the app is closed)
         Notifier.ensureChannels(this)
         RecallWorker.schedule(this)
+        vm.checkForUpdate(manual = false)   // quietly see if a newer build is on GitHub
         handleOpen(intent)
         torch = Torch(this)
 
