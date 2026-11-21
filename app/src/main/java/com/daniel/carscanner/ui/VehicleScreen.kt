@@ -167,7 +167,7 @@ fun VehicleScreen(vm: ScannerViewModel, onBack: () -> Unit, onSetup: (String) ->
                 HistorySites.all.forEach { site ->
                     NavRow(Icons.Filled.ManageSearch, site.name, site.about) {
                         vin?.let { clipboard.setText(AnnotatedString(it)); vm.message.value = "VIN copied. Paste it on ${site.name}." }
-                        uri.openUri(site.url)
+                        runCatching { uri.openUri(site.url) }
                     }
                 }
             }
@@ -203,7 +203,7 @@ fun VehicleScreen(vm: ScannerViewModel, onBack: () -> Unit, onSetup: (String) ->
                     if (open) {
                         if (r.consequence.isNotBlank()) { Label("Risk"); Text(r.consequence) }
                         if (r.remedy.isNotBlank()) { Label("Fix"); Text(r.remedy) }
-                        TextButton(onClick = { uri.openUri(r.url) }) { Text("Open on nhtsa.gov", color = Ui.Accent) }
+                        TextButton(onClick = { runCatching { uri.openUri(r.url) } }) { Text("Open on nhtsa.gov", color = Ui.Accent) }
                     }
                     Text("Campaign ${r.campaign}${if (r.date.isNotBlank()) ", ${r.date}" else ""}", color = Ui.Sub,
                         style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))

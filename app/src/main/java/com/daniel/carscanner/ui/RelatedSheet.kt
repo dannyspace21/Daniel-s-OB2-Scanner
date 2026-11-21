@@ -61,7 +61,7 @@ fun RelatedSheet(vm: ScannerViewModel, topic: String, keywords: List<String>, on
                 matches.forEach { r ->
                     Column(
                         Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(14.dp))
-                            .background(Ui.Raised).clickable { uri.openUri(r.url) }.padding(14.dp),
+                            .background(Ui.Raised).clickable { runCatching { uri.openUri(r.url) } }.padding(14.dp),
                     ) {
                         Row { StatusDot(Ui.Bad); Spacer(Modifier.width(8.dp)); Text(r.component, style = MaterialTheme.typography.labelMedium, color = Ui.Bad) }
                         Text(r.summary, maxLines = 3, modifier = Modifier.padding(top = 4.dp))
@@ -81,7 +81,7 @@ fun RelatedSheet(vm: ScannerViewModel, topic: String, keywords: List<String>, on
                     },
                     title = l.title,
                     subtitle = l.subtitle,
-                ) { uri.openUri(l.url) }
+                ) { runCatching { uri.openUri(l.url) } }
             }
         }
     }
