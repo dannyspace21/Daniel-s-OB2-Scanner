@@ -307,6 +307,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
         transport?.close()
         transport = null
         elm = null
+        expertMode.value = false   // never left armed for the next connection (or the next car)
         conn.value = Conn.Disconnected
         live.value = emptyMap()
     }
