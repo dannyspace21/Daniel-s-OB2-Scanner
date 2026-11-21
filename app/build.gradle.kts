@@ -1,10 +1,22 @@
 import java.time.LocalDate
+import java.util.Properties
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// Signing secrets: environment variables first, then a git-ignored keystore.properties.
+// See the signing notes inside android { } below.
+val localSigning = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { input -> load(input) }
+}
+fun secret(name: String): String? =
+    (System.getenv(name) ?: localSigning.getProperty(name))?.takeIf { it.isNotBlank() }
+val keystorePath: String? = secret("SIGNING_KEYSTORE_PATH")
+val hasSigningKey = keystorePath != null && file(keystorePath).exists()
 
 android {
     namespace = "com.daniel.carscanner"
@@ -14,8 +26,8 @@ android {
         applicationId = "com.daniel.carscanner"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
-        versionName = "2.2.2"
+        versionCode = 7
+        versionName = "2.2.3"
         // Build date shown on the About screen
         buildConfigField("String", "BUILD_DATE", "\"${LocalDate.now()}\"")
     }
@@ -28,15 +40,6 @@ android {
     //   SIGNING_KEYSTORE_PATH, SIGNING_STORE_PASSWORD, SIGNING_KEY_ALIAS, SIGNING_KEY_PASSWORD
     // Without them the build still works, signed with Android's standard debug key
     // (fine for testing, but it can't update an app installed from a signed build).
-    val localSigning = java.util.Properties().apply {
-        val f = rootProject.file("keystore.properties")
-        if (f.exists()) f.inputStream().use { load(it) }
-    }
-    fun secret(name: String): String? =
-        (System.getenv(name) ?: localSigning.getProperty(name))?.takeIf { it.isNotBlank() }
-    val keystorePath = secret("SIGNING_KEYSTORE_PATH")
-    val hasSigningKey = keystorePath != null && file(keystorePath).exists()
-
     signingConfigs {
         if (hasSigningKey) create("daniel") {
             storeFile = file(keystorePath!!)

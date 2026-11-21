@@ -712,6 +712,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
         when {
             v.length != 17 -> message.value = "A VIN is exactly 17 characters."
             v.any { it in "IOQ" } -> message.value = "VINs never contain I, O or Q. Check for 1 and 0 instead."
+            !Vin.isValid(v) -> message.value = "A VIN only uses the letters A to Z and the numbers 0 to 9."
             else -> setVin(v)
         }
     }

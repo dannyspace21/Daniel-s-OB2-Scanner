@@ -19,6 +19,12 @@ object Vin {
     // Model-year letters repeat every 30 years; we assume 2010 or later.
     private const val YEAR_LETTERS = "ABCDEFGHJKLMNPRSTVWXY"
 
+    /** VINs use 0-9 and A-Z except I, O and Q (too easy to mix up with 1 and 0). */
+    private val VALID = Regex("^[A-HJ-NPR-Z0-9]{17}$")
+
+    /** True if this is exactly 17 VIN characters. */
+    fun isValid(vin: String): Boolean = VALID.matches(vin)
+
     fun describe(vin: String): String? {
         if (vin.length != 17) return null
         val maker = makers.firstOrNull { vin.startsWith(it.first) }?.second

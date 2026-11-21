@@ -174,8 +174,9 @@ class ElmClient(
         } else {
             lines.filter { it.startsWith("4902") }.joinToString("") { it.substring(6) }
         }
-        val vin = Hex.bytes(hex).map { it.toChar() }.filter { it.isLetterOrDigit() }.joinToString("")
-        return vin.takeLast(17).ifEmpty { null }
+        // Plain ASCII letters and digits only (bytes above 127 would turn into accented letters).
+        val vin = Hex.bytes(hex).map { it.toChar() }.filter { it in 'A'..'Z' || it in '0'..'9' }.joinToString("")
+        return vin.takeLast(17).takeIf { Vin.isValid(it) }
     }
 
     /** Asks the adapter for the voltage at the OBD port (works even if the car doesn't report it). */
