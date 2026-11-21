@@ -145,7 +145,7 @@ object Nhtsa {
         c.connectTimeout = 10_000
         c.readTimeout = 15_000
         c.setRequestProperty("Accept", "application/json")
-        c.setRequestProperty("User-Agent", "DanielsCarMechanicScanner/2.2.3")
+        c.setRequestProperty("User-Agent", "DanielsCarMechanicScanner/2.3.0")
         c.instanceFollowRedirects = false   // never follow a redirect off the HTTPS address we asked for
         try {
             if (c.responseCode !in 200..299) throw IOException("NHTSA answered with error ${c.responseCode}")

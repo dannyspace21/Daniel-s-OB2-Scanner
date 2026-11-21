@@ -26,8 +26,8 @@ android {
         applicationId = "com.daniel.carscanner"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "2.2.3"
+        versionCode = 8
+        versionName = "2.3.0"
         // Build date shown on the About screen
         buildConfigField("String", "BUILD_DATE", "\"${LocalDate.now()}\"")
     }
