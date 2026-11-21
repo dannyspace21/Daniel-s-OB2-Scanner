@@ -50,6 +50,11 @@ fun ModulesScreen(vm: ScannerViewModel) {
 
     val scanning = status != null
     val withCodes = modules.filter { it.codes.isNotEmpty() }
+    // After a scan, modules with problems come first. During a scan, keep the found order so rows don't jump.
+    val listed = if (scanning) modules else modules.sortedByDescending { it.level.severity }
+    // The body-network option only applies to Toyota-family cars (shown too when the make isn't known yet).
+    val info by vm.vehicle.collectAsStateWithLifecycle()
+    val toyotaFamily = info?.make?.uppercase()?.let { it in setOf("TOYOTA", "LEXUS", "SCION") } ?: true
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -75,8 +80,8 @@ fun ModulesScreen(vm: ScannerViewModel) {
                 SecondaryButton("Stop scan", modifier = Modifier.fillMaxWidth(), onClick = vm::stopModuleScan)
             } else {
                 PrimaryButton(if (scanned) "Scan again" else "Scan all modules", enabled = busy == null,
-                    modifier = Modifier.fillMaxWidth()) { vm.scanModules(deep) }
-                Row(
+                    modifier = Modifier.fillMaxWidth()) { vm.scanModules(deep && toyotaFamily) }
+                if (toyotaFamily) Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { deep = !deep }.padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -99,7 +104,7 @@ fun ModulesScreen(vm: ScannerViewModel) {
             )
         }
 
-        items(modules, key = { it.address.label }) { m ->
+        items(listed, key = { it.address.label }) { m ->
             NavRow(
                 icon = Icons.Filled.Memory,
                 title = m.name,
