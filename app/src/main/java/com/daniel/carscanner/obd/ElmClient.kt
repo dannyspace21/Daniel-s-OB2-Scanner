@@ -57,6 +57,8 @@ class ElmClient(
         else session.withLock { sendNow(cmd, timeoutMs, quiet) }
 
     private suspend fun sendNow(cmd: String, timeoutMs: Long, quiet: Boolean): String = mutex.withLock {
+        // One printable command only: a line break inside would send a second, unchecked command.
+        if (!Safety.isSendable(cmd)) throw IOException("Refused to send a command with hidden characters")
         while (transport.input.tryReceive().isSuccess) { /* drop stale bytes */ }
         if (!quiet) log("> $cmd")
         transport.write((cmd + "\r").toByteArray(Charsets.US_ASCII))

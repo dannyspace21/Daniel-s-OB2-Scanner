@@ -118,7 +118,7 @@ data class Recall(
     val parkIt: Boolean,
 ) {
     /** The recall's page on nhtsa.gov. */
-    val url: String get() = "https://www.nhtsa.gov/recalls?nhtsaId=$campaign"
+    val url: String get() = "https://www.nhtsa.gov/recalls?nhtsaId=${URLEncoder.encode(campaign, "UTF-8")}"
 
     companion object {
         fun listToJson(list: List<Recall>): String = JSONArray(list.map {
@@ -146,13 +146,29 @@ object Nhtsa {
         c.readTimeout = 15_000
         c.setRequestProperty("Accept", "application/json")
         c.setRequestProperty("User-Agent", "DanielsCarMechanicScanner/2.2.2")
+        c.instanceFollowRedirects = false   // never follow a redirect off the HTTPS address we asked for
         try {
             if (c.responseCode !in 200..299) throw IOException("NHTSA answered with error ${c.responseCode}")
-            val text = c.inputStream.bufferedReader().use { it.readText() }
+            val text = c.inputStream.use { readCapped(it) }
             return try { JSONObject(text) } catch (e: Exception) { throw IOException("NHTSA sent an unreadable reply", e) }
         } finally {
             c.disconnect()
         }
+    }
+
+    /** NHTSA's replies are a few kilobytes; refuse anything absurdly large instead of running out of memory. */
+    private const val MAX_REPLY_BYTES = 2 * 1024 * 1024
+
+    private fun readCapped(input: java.io.InputStream): String {
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(8 * 1024)
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            out.write(buf, 0, n)
+            if (out.size() > MAX_REPLY_BYTES) throw IOException("NHTSA sent an unexpectedly large reply")
+        }
+        return out.toString("UTF-8")
     }
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")

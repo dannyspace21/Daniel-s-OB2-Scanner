@@ -47,6 +47,35 @@ Every file starts with a "WHAT THIS FILE DOES" note, and every function has a pl
 3. **Build > Build App Bundle(s) / APK(s) > Build APK(s)**.
 4. The APK lands in `app/build/outputs/apk/debug/app-debug.apk`. Copy it to the phone and open it to install (allow "install unknown apps" for your file manager).
 
+Or let GitHub build it: every push runs the unit tests and builds the APK. Download it from the **Actions** tab (open the latest run, then **Artifacts**).
+
+The code lives directly in this repository now, so edit and commit files here rather than uploading a zip.
+
+### Signing key
+
+Android only installs an update over the app if both builds were signed with the same key. That key is a secret, so it is **never** stored in the repository. GitHub Actions reads it from repository secrets (**Settings > Secrets and variables > Actions > New repository secret**):
+
+| Secret | Value |
+|---|---|
+| `SIGNING_KEYSTORE_BASE64` | The `.keystore` file, base64-encoded (`base64 -w0 your.keystore` on Linux, `certutil -encode` on Windows) |
+| `SIGNING_STORE_PASSWORD` | The keystore password |
+| `SIGNING_KEY_ALIAS` | Optional, defaults to `daniels` |
+| `SIGNING_KEY_PASSWORD` | Optional, defaults to the keystore password |
+
+For local builds, put the same names in a `keystore.properties` file next to `settings.gradle.kts` (it's git-ignored), with `SIGNING_KEYSTORE_PATH` pointing at the keystore. Without a key, builds are signed with Android's standard debug key.
+
+## Safety guard
+
+Every command the app sends goes through `obd/Safety.kt`:
+
+- **Read requests** go straight through.
+- **Actuator commands** (2F, 30) and **code clears** (04, 14) ask you to confirm first.
+- **Module-changing commands** (reset, security unlock, write, routines, flashing, programming sessions, network speed changes) and adapter rewrites (`ATPP`, `STPX`) are blocked unless Expert mode is on.
+- A command can't contain a line break, so nothing can hide a second command behind the one being checked.
+- **Body signals and Watch** may only use read requests, because they repeat several times a second.
+
+The tests in `app/src/test` check these rules on every build.
+
 ## Using it
 
 1. Plug in the adapter, ignition on (engine can be off).

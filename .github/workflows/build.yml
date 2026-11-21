@@ -1,25 +1,63 @@
 name: Build APK
 on:
   push:
+  pull_request:
   workflow_dispatch:
+
+# The build only needs to read the code.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Unzip project
-        run: unzip -o '*.zip'
+        with:
+          persist-credentials: false
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+
+      # The signing key lives in GitHub secrets, never in the repository.
+      # Settings > Secrets and variables > Actions:
+      #   SIGNING_KEYSTORE_BASE64  the .keystore file, base64-encoded
+      #   SIGNING_STORE_PASSWORD   its password
+      #   SIGNING_KEY_ALIAS        optional, defaults to "daniels"
+      #   SIGNING_KEY_PASSWORD     optional, defaults to the store password
+      # Without them the APK is signed with a throwaway debug key.
+      - name: Restore signing key
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$SIGNING_KEYSTORE_BASE64" ]; then
+            echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No SIGNING_KEYSTORE_BASE64 secret. This APK can't update an app installed from a signed build."
+          fi
+
+      - name: Unit tests
+        run: gradle testDebugUnitTest --no-daemon
+
       - name: Build APK
-        working-directory: DanielsCarMechanicScanner
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: gradle assembleDebug --no-daemon
+
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.keystore"
+
       - uses: actions/upload-artifact@v4
         with:
           name: DanielsCarMechanicScanner-apk
-          path: DanielsCarMechanicScanner/app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/app-debug.apk

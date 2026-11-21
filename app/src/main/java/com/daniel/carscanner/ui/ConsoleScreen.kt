@@ -129,8 +129,14 @@ fun ConsoleScreen(vm: ScannerViewModel) {
         AlertDialog(
             onDismissRequest = { confirm = null },
             containerColor = Ui.Card,
-            title = { Text("Send an actuator command?") },
-            text = { Text("\"$c\" can switch a real part on. Make sure the car is in Park and everyone is clear of the engine bay.") },
+            title = { Text("Send this command?") },
+            text = {
+                val erases = c.replace(" ", "").let { it.startsWith("04") || it.startsWith("14") }
+                Text(
+                    if (erases) "\"$c\" erases trouble codes, freeze frame and emissions readiness. The car will need a drive cycle before it can pass an inspection."
+                    else "\"$c\" can switch a real part on. Make sure the car is in Park and everyone is clear of the engine bay."
+                )
+            },
             confirmButton = { TextButton(onClick = { confirm = null; vm.sendRaw(c) }) { Text("Send command") } },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } },
         )

@@ -412,6 +412,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Adds a new test or replaces an edited one, and saves to the phone. */
     fun saveTest(t: ActiveTest) {
+        problemWith(t)?.let { message.value = it; return }
         val owned = if (t.vin.isBlank()) t.copy(vin = vin.value ?: "") else t
         tests.update { list -> (list.filter { it.id != owned.id } + owned).also(store::save) }
     }
@@ -431,7 +432,9 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     fun runTest(t: ActiveTest) {
         val e = elm ?: run { message.value = "Connect to your adapter first."; return }
         if (testJob != null) return
-        val blocked = (t.startCommands + t.stopCommands).any { Safety.classify(it) == Risk.Dangerous }
+        problemWith(t)?.let { message.value = it; return }
+        val blocked = (t.startCommands + t.stopCommands + t.keepAlive).filter { it.isNotBlank() }
+            .any { Safety.classify(it) == Risk.Dangerous }
         if (blocked && !expertMode.value) {
             message.value = "This test contains a command that can reset or reprogram a module. Turn on Expert mode in Console to allow it."
             return
@@ -473,6 +476,16 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stopTest() { testJob?.cancel() }
+
+    /** Why a test can't be saved or run (bad module address, hidden characters), or null if it's fine. */
+    private fun problemWith(t: ActiveTest): String? = when {
+        t.header.isNotBlank() && !Safety.isValidHeader(t.header) ->
+            "The module address must be 3, 6 or 8 hex digits, like 7E0."
+        (t.startCommands + t.stopCommands + t.keepAlive).filter { it.isNotBlank() }.any { !Safety.isSendable(it) } ->
+            "A command contains characters the adapter can't take. Use one command per line."
+        t.maxSeconds !in 1..120 -> "The time limit must be between 1 and 120 seconds."
+        else -> null
+    }
 
     // ---------- Health check ----------
 
@@ -865,8 +878,18 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     // ---------- Body signals and live view ----------
 
     fun saveSignal(sig: BodySignal) {
+        // Live view repeats this request several times a second, so it must only read.
+        if (!isReadRequest(sig.header, sig.command)) {
+            message.value = "Body signals can only use read requests (like 22xxxx or 21xx) and a valid module address."
+            return
+        }
         allSignals.update { list -> (list.filter { it.id != sig.id } + sig).also(signalStore::save) }
     }
+
+    /** True for a valid module address plus a request that only reads (safe to repeat forever). */
+    private fun isReadRequest(header: String, command: String): Boolean =
+        (header.isBlank() || Safety.isValidHeader(header)) &&
+            Safety.isSendable(command) && Safety.classify(command) == Risk.Normal
 
     fun deleteSignal(id: String) { allSignals.update { list -> list.filter { it.id != id }.also(signalStore::save) } }
 
@@ -894,7 +917,8 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
                 while (isActive) {
                     if (liveViewPaused.value || healthJob != null || moduleJob != null || testJob != null) { delay(400); continue }
                     val v = vin.value
-                    val sigs = allSignals.value.filter { it.vin == v }
+                    // Signals saved by older versions weren't checked, so only read-only ones are polled.
+                    val sigs = allSignals.value.filter { it.vin == v && isReadRequest(it.header, it.command) }
                     val due = sigs.filter { it.fast || it.element in trackers || cycle % 3 == 0 }
                     val read = mutableMapOf<Element, Float>()
                     val failed = mutableSetOf<Element>()
@@ -955,7 +979,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     fun startWatch(header: String, command: String) {
         val e = elm ?: run { watchError.value = "Connect to your adapter first."; return }
         val cmd = command.replace(" ", "").uppercase()
-        if (Safety.classify(cmd) != Risk.Normal) { watchError.value = "Watch only sends read requests."; return }
+        if (!isReadRequest(header, cmd)) { watchError.value = "Watch only sends read requests to a valid module address."; return }
         watchJob?.cancel()
         liveViewPaused.value = true
         watchError.value = null
@@ -1110,6 +1134,10 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     fun sendRaw(cmd: String) {
         val c = cmd.trim()
         if (c.isEmpty()) return
+        if (!Safety.isSendable(c)) {
+            appendLog("! Blocked: one command per line, using only letters, numbers and spaces.")
+            return
+        }
         if (Safety.classify(c) == Risk.Dangerous && !expertMode.value) {
             appendLog("! Blocked \"$c\": this can reset, unlock or reprogram a module. Turn on Expert mode to send it.")
             return

@@ -20,21 +20,38 @@ android {
         buildConfigField("String", "BUILD_DATE", "\"${LocalDate.now()}\"")
     }
     // One permanent signing key for every build. Android only installs an update
-    // over the existing app if both are signed with the same key; without this,
-    // each GitHub build got a new random key and couldn't update the installed app.
+    // over the existing app if both are signed with the same key.
+    //
+    // The key and its password are SECRET and never live in this repository.
+    // They come from environment variables (GitHub Actions secrets, see
+    // .github/workflows/build.yml) or from a local, git-ignored keystore.properties:
+    //   SIGNING_KEYSTORE_PATH, SIGNING_STORE_PASSWORD, SIGNING_KEY_ALIAS, SIGNING_KEY_PASSWORD
+    // Without them the build still works, signed with Android's standard debug key
+    // (fine for testing, but it can't update an app installed from a signed build).
+    val localSigning = java.util.Properties().apply {
+        val f = rootProject.file("keystore.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    fun secret(name: String): String? =
+        (System.getenv(name) ?: localSigning.getProperty(name))?.takeIf { it.isNotBlank() }
+    val keystorePath = secret("SIGNING_KEYSTORE_PATH")
+    val hasSigningKey = keystorePath != null && file(keystorePath).exists()
+
     signingConfigs {
-        create("daniel") {
-            storeFile = file("daniels-scanner.keystore")
-            storePassword = "QaeIbBQ35vWYGGmMMEDnWtFd"
-            keyAlias = "daniels"
-            keyPassword = "QaeIbBQ35vWYGGmMMEDnWtFd"
+        if (hasSigningKey) create("daniel") {
+            storeFile = file(keystorePath!!)
+            storePassword = secret("SIGNING_STORE_PASSWORD")
+            keyAlias = secret("SIGNING_KEY_ALIAS") ?: "daniels"
+            keyPassword = secret("SIGNING_KEY_PASSWORD") ?: secret("SIGNING_STORE_PASSWORD")
         }
     }
     buildTypes {
-        getByName("debug") { signingConfig = signingConfigs.getByName("daniel") }
+        getByName("debug") {
+            if (hasSigningKey) signingConfig = signingConfigs.getByName("daniel")
+        }
         getByName("release") {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("daniel")
+            if (hasSigningKey) signingConfig = signingConfigs.getByName("daniel")
         }
     }
     compileOptions {
@@ -61,4 +78,6 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.work:work-runtime-ktx:2.9.1")   // daily background recall check
+
+    testImplementation("junit:junit:4.13.2")
 }

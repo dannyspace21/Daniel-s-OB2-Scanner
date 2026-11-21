@@ -91,16 +91,27 @@ class MainActivity : ComponentActivity() {
         handleOpen(intent)
     }
 
-    /** Reads "open this car on this screen" from a notification. */
+    /**
+     * Reads "open this car on this screen" from a notification.
+     * This screen can be started by any app, so the request is only trusted as far as
+     * our own notifications go: a car already in your garage, and the Vehicle or Codes
+     * screen. Anything else is ignored (no adding cars, no jumping to Tests or Console).
+     */
     private fun handleOpen(intent: Intent?) {
         val screen = intent?.getStringExtra(EXTRA_SCREEN) ?: return
-        vm.openRequest.value = intent.getStringExtra(EXTRA_VIN) to screen
+        val vin = intent.getStringExtra(EXTRA_VIN)
         intent.removeExtra(EXTRA_SCREEN)
+        intent.removeExtra(EXTRA_VIN)
+        if (screen !in OPENABLE_SCREENS) return
+        if (vin != null && vm.garage.value.none { it.vin == vin }) return
+        vm.openRequest.value = vin to screen
     }
 
     companion object {
         const val EXTRA_VIN = "open_vin"
         const val EXTRA_SCREEN = "open_screen"
+        /** The only screens a notification opens. */
+        private val OPENABLE_SCREENS = setOf("Vehicle", "Codes")
     }
 
     /** Leaving the app (home button, switching apps): turn the flashlight off. */
