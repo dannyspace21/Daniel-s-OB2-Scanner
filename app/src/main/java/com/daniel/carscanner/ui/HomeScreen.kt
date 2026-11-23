@@ -6,6 +6,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -35,15 +39,15 @@ import com.daniel.carscanner.obd.Vin
 
 /*
  * WHAT THIS FILE DOES
- * The main screen, laid out like the Tesla app. From top to bottom:
+ * The main screen, laid out like a workshop scan tool. From top to bottom:
  *   - Vehicle name with a switcher (tap it to open your Garage), status line,
- *     flashlight button
- *   - The car drawing: right body style, doors and your paint color, animating
- *     lights, doors, windows, trunk and more. Tap it for Vehicle details.
- *   - Live view switch and status chips ("Door open", "Engine running"...)
+ *     Connect button, flashlight
+ *   - Update card when a newer build is on GitHub
+ *   - The car drawing (tap for Vehicle details), Live view switch and chips
  *   - Health card: green / amber / red ring with a one-line summary
- *   - Round quick actions: Health check, Codes, All modules, Live data
- *   - One row per car system with its status dot, then tools and settings
+ *   - "Full system scan": one tap reads every module in the car
+ *   - Function tiles in sections: Diagnose, Bidirectional, Service,
+ *     Reports & settings. Tiles show badges for codes and recalls.
  */
 @Composable
 fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
@@ -72,6 +76,13 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
         is Conn.Failed -> c.reason
         Conn.Disconnected -> "Not connected"
     }
+
+    // For the function tiles below
+    val stored by vm.storedCodes.collectAsStateWithLifecycle()
+    val pending by vm.pendingCodes.collectAsStateWithLifecycle()
+    val modulesWithCodes = modules.count { it.codes.isNotEmpty() }
+    val mySignals = signals.count { it.vin == vin }
+    val needConnect: (Screen) -> Unit = { target -> go(if (connected) target else Screen.Connect) }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp)) {
         // Name, status and flashlight
@@ -178,66 +189,80 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
             ReturnedBanner(r, onOpen = { go(Screen.Codes) }, onDismiss = { vm.dismissReturned(r) })
         }
 
-        // Quick actions
+        // Full system scan: the main action, like a workshop scan tool
         item {
-            Row(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                // Greyed out until connected; tapping one then takes you to Connect instead of doing nothing.
-                val toConnect = { go(Screen.Connect) }
-                RoundAction(Icons.Filled.HealthAndSafety, "Health", connected, toConnect) { go(Screen.Health) }
-                RoundAction(Icons.Filled.ReportProblem, "Codes", connected, toConnect) { go(Screen.Codes) }
-                RoundAction(Icons.Filled.Memory, "Modules", connected, toConnect) { go(Screen.Modules) }
-                RoundAction(Icons.Filled.Speed, "Live", connected, toConnect) { go(Screen.Live) }
+            val scanning by vm.moduleScanStatus.collectAsStateWithLifecycle()
+            Spacer(Modifier.height(14.dp))
+            HeroAction(
+                icon = Icons.Filled.ManageSearch,
+                title = "Full system scan",
+                subtitle = scanning ?: if (connected) "Every module: engine, ABS, airbags, body and more" else "Connect your adapter to start",
+                enabled = connected,
+            ) {
+                if (connected) { vm.scanModules(deep = info?.make?.uppercase() in setOf("TOYOTA", "LEXUS", "SCION")); go(Screen.Modules) }
+                else go(Screen.Connect)
             }
         }
 
-        // One row per system, showing its worst finding
-        item { SectionHeader("Systems") }
-        items(HealthCheck.systems) { system ->
-            val worst = findings.filter { it.system == system }.maxByOrNull { it.level.severity }
-            NavRow(
-                icon = systemIcon(system), title = system,
-                subtitle = worst?.title ?: "Not checked yet", dot = worst?.level?.color,
-            ) { go(if (system == HealthCheck.CODES) Screen.Codes else Screen.Health) }
+        // Function tiles, grouped like a scan tool's main menu
+
+        item { SectionHeader("Diagnose") }
+        item {
+            TileRow(
+                Tile(Icons.Filled.ReportProblem, "Trouble codes", when {
+                    stored.isNotEmpty() -> "${stored.size} stored"
+                    pending.isNotEmpty() -> "${pending.size} pending"
+                    else -> "Read and clear"
+                }, badge = (stored.size + pending.size).takeIf { it > 0 }, badgeColor = if (stored.isNotEmpty()) Ui.Bad else Ui.Watch) { needConnect(Screen.Codes) },
+                Tile(Icons.Filled.Memory, "All systems", if (modules.isEmpty()) "Every module" else "${modules.size} found",
+                    badge = modulesWithCodes.takeIf { it > 0 }, badgeColor = Ui.Bad) { needConnect(Screen.Modules) },
+            )
+        }
+        item {
+            TileRow(
+                Tile(Icons.Filled.HealthAndSafety, "Health check", if (findings.isEmpty()) "20-second check" else "Last result ready") { needConnect(Screen.Health) },
+                Tile(Icons.Filled.Speed, "Live data", "Gauges with normal ranges") { needConnect(Screen.Live) },
+            )
         }
 
-        // Every module in the car
+        item { SectionHeader("Bidirectional") }
         item {
-            val withCodes = modules.count { it.codes.isNotEmpty() }
-            NavRow(
-                Icons.Filled.Memory, "All modules",
-                when {
-                    modules.isEmpty() -> "ABS, airbags, transmission, body and more"
-                    withCodes == 0 -> "${modules.size} modules, no codes"
-                    else -> "${modules.size} modules, $withCodes with codes"
-                },
-                dot = modules.takeIf { it.isNotEmpty() }?.maxBy { it.level.severity }?.level?.color,
-            ) { go(Screen.Modules) }
+            TileRow(
+                Tile(Icons.Filled.Build, "Active tests", "Switch parts on to test them") { go(Screen.Tests) },
+                Tile(Icons.Filled.Sensors, "Body live view", if (mySignals == 0) "Set up automatically" else "$mySignals signals") { go(Screen.BodyData) },
+            )
+        }
+        item {
+            TileRow(
+                Tile(Icons.Filled.DirectionsCar, "Vehicle & recalls", if (recalls.isEmpty()) "Details and controls" else "${recalls.size} recalls",
+                    badge = recalls.size.takeIf { it > 0 }, badgeColor = Ui.Watch) { go(Screen.Vehicle) },
+                Tile(Icons.Filled.Code, "Console", "Raw commands") { go(Screen.Console) },
+            )
         }
 
-        item { SectionHeader("Your car") }
-        item { NavRow(Icons.Filled.Garage, "Garage", if (garage.isEmpty()) "Your cars appear here" else "${garage.size} car${if (garage.size > 1) "s" else ""}") { go(Screen.Garage) } }
+        item { SectionHeader("Service") }
         item {
-            NavRow(Icons.Filled.DirectionsCar, "Vehicle & recalls",
-                if (info == null) "Details, paint color and recalls" else if (recalls.isEmpty()) "No recalls found" else "${recalls.size} recalls on record",
-                dot = if (recalls.isNotEmpty()) Ui.Watch else null) { go(Screen.Vehicle) }
+            TileRow(
+                Tile(Icons.Filled.EventNote, "Maintenance", "Oil, filters, fluids") { go(Screen.Maintenance) },
+                Tile(Icons.Filled.LocalGasStation, "Trips & MPG", if (trip != null) "Trip running" else "Fuel economy") { go(Screen.Trips) },
+            )
+        }
+
+        item { SectionHeader("Reports & settings") }
+        item {
+            TileRow(
+                Tile(Icons.Filled.History, "Reports", "Scan history to share") { go(Screen.History) },
+                Tile(Icons.Filled.Garage, "Garage", if (garage.isEmpty()) "Your cars" else "${garage.size} car${if (garage.size > 1) "s" else ""}") { go(Screen.Garage) },
+            )
         }
         item {
-            NavRow(Icons.Filled.LocalGasStation, "Trips & MPG", if (trip != null) "Trip in progress" else "Fuel economy and trip log",
-                dot = if (trip != null) Ui.Accent else null) { go(Screen.Trips) }
+            TileRow(
+                Tile(Icons.Filled.Bluetooth, "Adapter", (conn as? Conn.Connected)?.name ?: "Not connected",
+                    badgeColor = Ui.Good, dot = connected) { go(Screen.Connect) },
+                Tile(Icons.Filled.Settings, "Settings", "Updates, appearance, about") { go(Screen.About) },
+            )
         }
-        item { NavRow(Icons.Filled.EventNote, "Maintenance", "Oil changes, filters and fluids") { go(Screen.Maintenance) } }
-        item { NavRow(Icons.Filled.History, "Scan history", "Past results and shareable reports") { go(Screen.History) } }
-        item { SectionHeader("Tools") }
-        item { NavRow(Icons.Filled.Speed, "Live data", "Gauges with normal ranges") { go(Screen.Live) } }
-        item { NavRow(Icons.Filled.Sensors, "Body data", "Set up live doors, lights and windows") { go(Screen.BodyData) } }
-        item { NavRow(Icons.Filled.Build, "Active tests", "Switch parts on to prove they work") { go(Screen.Tests) } }
-        item { NavRow(Icons.Filled.Code, "Console", "Send raw commands") { go(Screen.Console) } }
-        item {
-            NavRow(Icons.Filled.Bluetooth, "Adapter", (conn as? Conn.Connected)?.name ?: "Not connected",
-                dot = if (connected) Ui.Good else null) { go(Screen.Connect) }
-        }
-        item { SectionHeader("Settings") }
-        item { NavRow(Icons.Filled.Info, "About & settings", "Version, appearance, privacy") { go(Screen.About) } }
+        item { Spacer(Modifier.height(24.dp)) }
     }
 }
 
@@ -301,5 +326,77 @@ private fun HealthCard(
             Spacer(Modifier.width(8.dp))
             PrimaryButton(if (checked) "Again" else "Run", onClick = onRun)
         }
+    }
+}
+
+/** One function tile on Home. badge = a count shown in the corner (codes, recalls). */
+private class Tile(
+    val icon: ImageVector, val title: String, val subtitle: String,
+    val badge: Int? = null, val badgeColor: Color = Ui.Accent, val dot: Boolean = false,
+    val onClick: () -> Unit,
+)
+
+/** Two tiles side by side. */
+@Composable
+private fun TileRow(a: Tile, b: Tile) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        TileCard(a, Modifier.weight(1f))
+        TileCard(b, Modifier.weight(1f))
+    }
+}
+
+/** A square-ish card: icon in a colored circle, title, one-line status, optional badge. */
+@Composable
+private fun TileCard(t: Tile, modifier: Modifier) {
+    val source = remember { MutableInteractionSource() }
+    val tap = rememberTapFeedback()
+    val pressed by source.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.95f else 1f, label = "tile")
+    Box(
+        modifier.height(118.dp).scale(scale).clip(RoundedCornerShape(18.dp)).background(Ui.Card)
+            .clickable(interactionSource = source, indication = LocalIndication.current) { tap(); t.onClick() }
+            .padding(14.dp),
+    ) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+            Box(Modifier.size(40.dp).clip(CircleShape).background(Ui.Accent.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+                Icon(t.icon, contentDescription = null, tint = Ui.Accent, modifier = Modifier.size(22.dp))
+            }
+            Column {
+                Text(t.title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                Text(t.subtitle, style = MaterialTheme.typography.bodySmall, color = Ui.Sub, maxLines = 1)
+            }
+        }
+        when {
+            t.badge != null -> Text(
+                if (t.badge > 99) "99+" else t.badge.toString(), color = Color.White, style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.align(Alignment.TopEnd).clip(RoundedCornerShape(10.dp)).background(t.badgeColor)
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+            t.dot -> Box(Modifier.align(Alignment.TopEnd).padding(6.dp)) { StatusDot(t.badgeColor, 10) }
+        }
+    }
+}
+
+/** The big full-width action at the top of the menu. */
+@Composable
+private fun HeroAction(icon: ImageVector, title: String, subtitle: String, enabled: Boolean, onClick: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    val tap = rememberTapFeedback()
+    val pressed by source.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, label = "hero")
+    Row(
+        Modifier.fillMaxWidth().scale(scale).clip(RoundedCornerShape(20.dp))
+            .background(if (enabled) Ui.Accent else Ui.Card)
+            .clickable(interactionSource = source, indication = LocalIndication.current) { tap(); onClick() }
+            .padding(18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = if (enabled) Color.White else Ui.Accent, modifier = Modifier.size(34.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleLarge, color = if (enabled) Color.White else Ui.Text)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = if (enabled) Color.White.copy(alpha = 0.85f) else Ui.Sub, maxLines = 2)
+        }
+        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = if (enabled) Color.White else Ui.Sub)
     }
 }
