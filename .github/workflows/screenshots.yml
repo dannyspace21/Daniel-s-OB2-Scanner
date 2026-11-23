@@ -50,4 +50,5 @@ jobs:
           git add docs/screenshots
           git diff --cached --quiet && { echo "No changes"; exit 0; }
           git commit -m "Update README screenshots"
-          git push
+          git pull --rebase origin main   # main may have moved while the emulator ran
+          git push origin HEAD:main
