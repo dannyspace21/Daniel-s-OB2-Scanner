@@ -22,7 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
  */
 
 /** Every screen in the app. */
-enum class Screen { Home, Connect, Health, Live, Codes, Modules, Tests, Console, Vehicle, About, Garage, BodyData, History, Maintenance, Trips }
+enum class Screen { Home, Connect, Health, Live, Codes, Modules, Tests, Console, Vehicle, About, Garage, BodyData, History, Maintenance, Trips, Monitors }
 
 @Composable
 fun AppRoot(vm: ScannerViewModel, hasPermission: Boolean, requestPermission: () -> Unit) {
@@ -75,6 +75,7 @@ fun AppRoot(vm: ScannerViewModel, hasPermission: Boolean, requestPermission: () 
                 Screen.Connect -> ConnectScreen(vm, hasPermission, requestPermission, ::back)
                 Screen.Health -> HealthScreen(vm, ::back) { go(Screen.Codes) }
                 Screen.Live -> Page("Live data", ::back) { if (connected) LiveScreen(vm) else NeedsConnection { go(Screen.Connect) } }
+                Screen.Monitors -> Page("Monitor test results", ::back) { if (connected) MonitorTestsScreen(vm) else NeedsConnection { go(Screen.Connect) } }
                 Screen.Codes -> Page("Trouble codes", ::back) { if (connected) CodesScreen(vm) else NeedsConnection { go(Screen.Connect) } }
                 Screen.Vehicle -> VehicleScreen(vm, ::back) { key -> vm.testDraftVisual.value = key; go(Screen.Tests) }
                 Screen.About -> AboutScreen(vm, ::back)

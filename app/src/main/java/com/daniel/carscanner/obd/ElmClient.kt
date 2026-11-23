@@ -209,6 +209,30 @@ class ElmClient(
 
     suspend fun batteryVoltage(): String = send("ATRV", quiet = true)
 
+    /**
+     * Mode 06: the engine computer's self-test results (see Mode06.kt). CAN cars only;
+     * returns null on older cars. Asks which monitors are supported (0600, 0620...),
+     * then reads each one.
+     */
+    suspend fun monitorTests(progress: (Float) -> Unit = {}): List<MonitorTest>? {
+        if (!isCan) return null
+        val mids = sortedSetOf<Int>()
+        var base = 0
+        while (base <= 0xE0) {
+            val found = Hex.dataLines(send("06%02X".format(base), 4_000)).flatMap { Mode06.supportedMids(base, it) }.toSet()
+            if (found.isEmpty()) break
+            mids += found.filter { it % 0x20 != 0 }
+            if ((base + 0x20) !in found) break
+            base += 0x20
+        }
+        val out = mutableListOf<MonitorTest>()
+        mids.forEachIndexed { i, m ->
+            progress(i.toFloat() / mids.size)
+            out += try { Mode06.parse(Hex.dataLines(send("06%02X".format(m), 4_000, quiet = true))) } catch (_: ElmTimeout) { emptyList() }
+        }
+        return out
+    }
+
     /** The command that points the adapter back at "all modules" after a test talked to one module. */
     fun resetHeaderCommand() = if (isCan) "ATSH7DF" else "ATSH686AF1"
 }

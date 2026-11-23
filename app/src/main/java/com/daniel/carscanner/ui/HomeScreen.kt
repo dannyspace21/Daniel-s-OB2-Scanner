@@ -222,7 +222,13 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
         item {
             TileRow(
                 Tile(Icons.Filled.HealthAndSafety, "Health check", if (findings.isEmpty()) "20-second check" else "Last result ready") { needConnect(Screen.Health) },
-                Tile(Icons.Filled.Speed, "Live data", "Gauges and ranges") { needConnect(Screen.Live) },
+                Tile(Icons.Filled.Speed, "Live data", "Gauges and graphs") { needConnect(Screen.Live) },
+            )
+        }
+        item {
+            TileRow(
+                Tile(Icons.Filled.Checklist, "Monitor tests", "Self-test results (mode 06)") { needConnect(Screen.Monitors) },
+                Tile(Icons.Filled.Garage, "Garage", if (garage.isEmpty()) "Your cars" else "${garage.size} car${if (garage.size > 1) "s" else ""}") { go(Screen.Garage) },
             )
         }
 
@@ -253,14 +259,14 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
         item {
             TileRow(
                 Tile(Icons.Filled.History, "Reports", "Scan history to share") { go(Screen.History) },
-                Tile(Icons.Filled.Garage, "Garage", if (garage.isEmpty()) "Your cars" else "${garage.size} car${if (garage.size > 1) "s" else ""}") { go(Screen.Garage) },
+                Tile(Icons.Filled.Bluetooth, "Adapter", (conn as? Conn.Connected)?.name ?: "Not connected",
+                    badgeColor = Ui.Good, dot = connected) { go(Screen.Connect) },
             )
         }
         item {
             TileRow(
-                Tile(Icons.Filled.Bluetooth, "Adapter", (conn as? Conn.Connected)?.name ?: "Not connected",
-                    badgeColor = Ui.Good, dot = connected) { go(Screen.Connect) },
                 Tile(Icons.Filled.Settings, "Settings", "Updates, appearance, about") { go(Screen.About) },
+                null,
             )
         }
         item { Spacer(Modifier.height(24.dp)) }
@@ -339,10 +345,10 @@ private class Tile(
 
 /** Two tiles side by side. */
 @Composable
-private fun TileRow(a: Tile, b: Tile) {
+private fun TileRow(a: Tile, b: Tile?) {
     Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         TileCard(a, Modifier.weight(1f))
-        TileCard(b, Modifier.weight(1f))
+        if (b != null) TileCard(b, Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
     }
 }
 

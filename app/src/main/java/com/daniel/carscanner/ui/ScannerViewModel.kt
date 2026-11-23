@@ -140,6 +140,8 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     val supported = MutableStateFlow<Set<Int>>(emptySet())
     val selectedPids = MutableStateFlow(setOf(0x0C, 0x05, 0x42, 0x0D, 0x11, 0x04))
     val live = MutableStateFlow<Map<Int, Double>>(emptyMap())
+    /** Recent readings per sensor for the live graphs (oldest first, last ~2 minutes). */
+    val history = MutableStateFlow<Map<Int, List<Float>>>(emptyMap())
     val polling = MutableStateFlow(false)
 
     val milOn = MutableStateFlow<Boolean?>(null)
@@ -205,6 +207,9 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     val maintenance = MutableStateFlow<List<MaintItem>>(emptyList())
     val readiness = MutableStateFlow<Readiness?>(null)
     val freezeFrame = MutableStateFlow<Pair<String, List<Pair<Pid, Double>>>?>(null)
+    /** Mode 06 self-test results, null until read. */
+    val monitorTests = MutableStateFlow<List<com.daniel.carscanner.obd.MonitorTest>?>(null)
+    val monitorProgress = MutableStateFlow<Float?>(null)
 
     // Codes that came back after you cleared them (shown on Home and Codes until dismissed)
     val returnedCodes = MutableStateFlow<List<ReturnedCode>>(emptyList())
@@ -386,7 +391,10 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
                         val pid = Pids.byCode[code] ?: continue
                         if (supported.value.isNotEmpty() && code !in supported.value) continue
                         try {
-                            e.readPid(pid)?.let { v -> live.update { it + (code to v) } }
+                            e.readPid(pid)?.let { v ->
+                                live.update { it + (code to v) }
+                                history.update { h -> h + (code to ((h[code] ?: emptyList()) + v.toFloat()).takeLast(HISTORY_SAMPLES)) }
+                            }
                         } catch (_: ElmTimeout) { }
                     }
                     delay(50)
@@ -913,6 +921,28 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     private fun isReadRequest(header: String, command: String): Boolean =
         Safety.readRequestProblem(header, command) == null
 
+    // ---------- Monitor test results (mode 06) ----------
+
+    /** Reads every emissions self-test result the engine computer has stored. */
+    fun readMonitorTests() = launchBusy("Reading test results") { e ->
+        monitorProgress.value = 0f
+        try {
+            val tests = e.monitorTests { p -> monitorProgress.value = p }
+            if (tests == null) {
+                message.value = "Test results need a CAN car (most cars from 2008 on)."
+                return@launchBusy
+            }
+            monitorTests.value = tests
+            if (tests.isEmpty()) message.value = "The car didn't report any test results. Drive it normally for a day so its monitors run, then try again."
+            else {
+                val failed = tests.filter { !it.passed }
+                record("Monitor tests", if (failed.isEmpty()) "${tests.size} tests, all passed" else "${failed.size} of ${tests.size} tests failed",
+                    if (failed.isEmpty()) Level.Good else Level.Problem,
+                    failed.map { "${it.monitor}: ${it.test}" })
+            }
+        } finally { monitorProgress.value = null }
+    }
+
     // ---------- In-app updates (from the app's GitHub releases) ----------
 
     /** info = a newer build is available; progress = downloading; note = a message for you. */
@@ -1406,6 +1436,8 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         /** Silver, until you pick a color. */
         const val DEFAULT_PAINT = 0xFFB9BDC3
+        /** How many readings each live graph keeps. */
+        const val HISTORY_SAMPLES = 120
     }
 
     /** Android calls this when the app closes: release Bluetooth. */

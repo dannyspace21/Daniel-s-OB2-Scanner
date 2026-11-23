@@ -20,7 +20,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -47,6 +50,7 @@ fun LiveScreen(vm: ScannerViewModel) {
     val supported by vm.supported.collectAsStateWithLifecycle()
     val live by vm.live.collectAsStateWithLifecycle()
     val polling by vm.polling.collectAsStateWithLifecycle()
+    val history by vm.history.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf(false) }
     var info by remember { mutableStateOf<Pid?>(null) }
     var related by remember { mutableStateOf<Pid?>(null) }
@@ -96,7 +100,7 @@ fun LiveScreen(vm: ScannerViewModel) {
             items(shown, key = { it.code }) { pid ->
                 val v = live[pid.code]
                 val level = if (v == null) Level.Unknown else HealthCheck.levelFor(pid.code, v, state)
-                Gauge(pid, v, supported.isEmpty() || pid.code in supported, level) { info = pid }
+                Gauge(pid, v, supported.isEmpty() || pid.code in supported, level, history[pid.code].orEmpty()) { info = pid }
             }
             if (shown.isEmpty()) item(span = { GridItemSpan(2) }) {
                 Text("No gauges chosen yet. Tap Choose gauges to pick what to watch.", color = Ui.Sub)
@@ -111,6 +115,21 @@ fun LiveScreen(vm: ScannerViewModel) {
         ModalBottomSheet(onDismissRequest = { info = null }, containerColor = Ui.Card) {
             Column(Modifier.padding(start = 24.dp, end = 24.dp, bottom = 40.dp)) {
                 Text(pid.name, style = MaterialTheme.typography.titleLarge)
+                // Big graph of the recent readings, with min / average / max
+                val h = history[pid.code].orEmpty()
+                if (h.size >= 2) {
+                    Spacer(Modifier.height(14.dp))
+                    Sparkline(h, pid.min.toFloat(), pid.max.toFloat(), Ui.Accent,
+                        Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(12.dp)).background(Ui.Raised).padding(8.dp),
+                        strokeDp = 2.5f, showMidline = true)
+                    Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        fun f(x: Float) = if (pid.unit == "λ") "%.2f".format(x) else if (abs(x) >= 100) "%.0f".format(x) else "%.1f".format(x)
+                        Text("Min ${f(h.min())}", color = Ui.Sub, style = MaterialTheme.typography.bodySmall)
+                        Text("Avg ${f(h.average().toFloat())}", color = Ui.Sub, style = MaterialTheme.typography.bodySmall)
+                        Text("Max ${f(h.max())} ${pid.unit}", color = Ui.Sub, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text("Last ${h.size} readings", color = Ui.Sub, style = MaterialTheme.typography.labelMedium)
+                }
                 Spacer(Modifier.height(10.dp))
                 Text(pid.about)
                 Spacer(Modifier.height(16.dp))
@@ -135,7 +154,7 @@ fun LiveScreen(vm: ScannerViewModel) {
 
 /** One gauge tile: colored arc, big number, unit, name. */
 @Composable
-private fun Gauge(pid: Pid, value: Double?, available: Boolean, level: Level, onTap: () -> Unit) {
+private fun Gauge(pid: Pid, value: Double?, available: Boolean, level: Level, history: List<Float>, onTap: () -> Unit) {
     val target = value?.let { ((it - pid.min) / (pid.max - pid.min)).coerceIn(0.0, 1.0).toFloat() } ?: 0f
     val frac by animateFloatAsState(target, label = "arc")   // smooth needle movement
     val arcColor by animateColorAsState(if (level == Level.Unknown) Ui.Accent else level.color, label = "color")
@@ -171,5 +190,32 @@ private fun Gauge(pid: Pid, value: Double?, available: Boolean, level: Level, on
             if (level != Level.Unknown) { StatusDot(level.color, 7); Spacer(Modifier.width(6.dp)) }
             Text(pid.name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
         }
+        // Small moving graph of recent readings
+        Sparkline(history, pid.min.toFloat(), pid.max.toFloat(), if (level == Level.Unknown) Ui.Accent else level.color,
+            Modifier.fillMaxWidth().height(30.dp).padding(top = 6.dp))
     }
 }
+
+/**
+ * A line graph of recent readings. Scales to the sensor's range, widened if a
+ * reading goes outside it. Draws nothing until there are two readings.
+ */
+@Composable
+fun Sparkline(values: List<Float>, min: Float, max: Float, color: Color, modifier: Modifier, strokeDp: Float = 1.8f, showMidline: Boolean = false) {
+    val line = Ui.Line
+    Canvas(modifier) {
+        if (values.size < 2) return@Canvas
+        val lo = minOf(min, values.min())
+        val hi = maxOf(max, values.max()).let { if (it - lo < 1e-6f) lo + 1f else it }
+        fun y(v: Float) = size.height - (v - lo) / (hi - lo) * size.height
+        if (showMidline) drawLine(line, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), strokeWidth = 1.dp.toPx())
+        val step = size.width / (HISTORY_POINTS - 1).coerceAtLeast(1)
+        val start = size.width - step * (values.size - 1)   // newest reading at the right edge
+        val path = Path().apply {
+            values.forEachIndexed { i, v -> if (i == 0) moveTo(start, y(v)) else lineTo(start + step * i, y(v)) }
+        }
+        drawPath(path, color, style = Stroke(strokeDp.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+private const val HISTORY_POINTS = ScannerViewModel.HISTORY_SAMPLES
