@@ -132,11 +132,12 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
                     modifier = Modifier.fillMaxSize(),
                     dim = info == null,
                 )
-                if (info == null) Text(
-                    if (connected) "Reading your VIN…" else "Connect your adapter, or tap the name above to add a car",
-                    color = Ui.Sub, modifier = Modifier.align(Alignment.BottomCenter), textAlign = TextAlign.Center,
-                )
             }
+            // Below the drawing, not on top of it
+            if (info == null) Text(
+                if (connected) "Reading your VIN…" else "Connect your adapter, or tap the name above to add a car",
+                color = Ui.Sub, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), textAlign = TextAlign.Center,
+            )
         }
 
         // Live view switch and status chips
@@ -221,7 +222,7 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
         item {
             TileRow(
                 Tile(Icons.Filled.HealthAndSafety, "Health check", if (findings.isEmpty()) "20-second check" else "Last result ready") { needConnect(Screen.Health) },
-                Tile(Icons.Filled.Speed, "Live data", "Gauges with normal ranges") { needConnect(Screen.Live) },
+                Tile(Icons.Filled.Speed, "Live data", "Gauges and ranges") { needConnect(Screen.Live) },
             )
         }
 

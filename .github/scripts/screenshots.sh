@@ -8,6 +8,9 @@ OUT=docs/screenshots
 mkdir -p "$OUT"
 
 adb install -r app/build/outputs/apk/debug/app-debug.apk
+# Offline, so the screenshots don't show an "Update available" card for this test build.
+adb shell svc wifi disable || true
+adb shell svc data disable || true
 for p in BLUETOOTH_CONNECT BLUETOOTH_SCAN POST_NOTIFICATIONS; do adb shell pm grant $PKG android.permission.$p || true; done
 
 shot() { sleep 3; adb exec-out screencap -p > "$OUT/$1.png"; echo "saved $1"; }
