@@ -50,7 +50,7 @@ fun LiveScreen(vm: ScannerViewModel) {
     val supported by vm.supported.collectAsStateWithLifecycle()
     val live by vm.live.collectAsStateWithLifecycle()
     val polling by vm.polling.collectAsStateWithLifecycle()
-    val history by vm.history.collectAsStateWithLifecycle()
+    val history by vm.liveHistory.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf(false) }
     var info by remember { mutableStateOf<Pid?>(null) }
     var related by remember { mutableStateOf<Pid?>(null) }

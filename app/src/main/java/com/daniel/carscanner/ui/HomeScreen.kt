@@ -265,7 +265,7 @@ fun HomeScreen(vm: ScannerViewModel, go: (Screen) -> Unit) {
         }
         item {
             TileRow(
-                Tile(Icons.Filled.Settings, "Settings", "Updates, appearance, about") { go(Screen.About) },
+                Tile(Icons.Filled.Settings, "Settings", "Updates and theme") { go(Screen.About) },
                 null,
             )
         }

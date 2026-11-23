@@ -141,7 +141,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
     val selectedPids = MutableStateFlow(setOf(0x0C, 0x05, 0x42, 0x0D, 0x11, 0x04))
     val live = MutableStateFlow<Map<Int, Double>>(emptyMap())
     /** Recent readings per sensor for the live graphs (oldest first, last ~2 minutes). */
-    val history = MutableStateFlow<Map<Int, List<Float>>>(emptyMap())
+    val liveHistory = MutableStateFlow<Map<Int, List<Float>>>(emptyMap())
     val polling = MutableStateFlow(false)
 
     val milOn = MutableStateFlow<Boolean?>(null)
@@ -393,7 +393,7 @@ class ScannerViewModel(app: Application) : AndroidViewModel(app) {
                         try {
                             e.readPid(pid)?.let { v ->
                                 live.update { it + (code to v) }
-                                history.update { h -> h + (code to ((h[code] ?: emptyList()) + v.toFloat()).takeLast(HISTORY_SAMPLES)) }
+                                liveHistory.update { h -> h + (code to ((h[code] ?: emptyList()) + v.toFloat()).takeLast(HISTORY_SAMPLES)) }
                             }
                         } catch (_: ElmTimeout) { }
                     }
