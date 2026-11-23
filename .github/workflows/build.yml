@@ -88,6 +88,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # One release at a time, so back-to-back pushes don't trip over each other.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -103,8 +107,13 @@ jobs:
         run: |
           APK="DanielsCarMechanicScanner-build-$RUN.apk"
           mv app-debug.apk "$APK"
-          gh release create "build-$RUN" "$APK" --target "$SHA" --title "Build $RUN" --notes "$NOTES" --latest
-          # Keep only the 10 newest builds.
+          # GitHub occasionally refuses for a moment (403); try a few times.
+          for attempt in 1 2 3 4; do
+            gh release create "build-$RUN" "$APK" --target "$SHA" --title "Build $RUN" --notes "$NOTES" --latest && break
+            [ "$attempt" = 4 ] && exit 1
+            sleep $((attempt * 15))
+          done
+          # Keep only the 10 newest builds (a failure here doesn't matter).
           gh release list --limit 100 --json tagName --jq '.[10:][].tagName' | while read -r tag; do
-            gh release delete "$tag" --cleanup-tag --yes
+            gh release delete "$tag" --cleanup-tag --yes || true
           done
