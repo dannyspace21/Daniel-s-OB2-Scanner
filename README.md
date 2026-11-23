@@ -1,32 +1,51 @@
 # Daniel's Car Mechanic Scanner
 
-An Android app for ELM327-compatible OBD2 adapters, Classic Bluetooth or BLE.
+A workshop-style scan tool for Android. Plug an ELM327-compatible OBD2 adapter (Classic Bluetooth or BLE) into your car and get a full system scan, live data, health checks, bidirectional tests and a live drawing of your car that mirrors its doors and lights.
+
+**[Download the latest APK](https://github.com/dannyspace21/Daniel-s-OB2-Scanner/releases/latest)**. After the first install, the app updates itself: when a newer build is out, Home shows **Update available**.
+
+## Screenshots
+
+<p>
+  <img src="docs/screenshots/home-dark.png" width="240" alt="Home: your car, health card and Full system scan">
+  <img src="docs/screenshots/menu-dark.png" width="240" alt="Function tiles: Diagnose and Bidirectional">
+  <img src="docs/screenshots/menu-2-dark.png" width="240" alt="Function tiles: Service, Reports and settings">
+</p>
+<p>
+  <img src="docs/screenshots/home-light.png" width="240" alt="Home in light mode">
+  <img src="docs/screenshots/connect-dark.png" width="240" alt="Connecting an adapter">
+  <img src="docs/screenshots/settings-dark.png" width="240" alt="Settings and updates">
+</p>
+
+Screenshots are taken automatically on an Android emulator by **Actions > Screenshots > Run workflow**, so they always match the current build. They show the app before a car is connected.
 
 ## What it does
 
-- **Home**: your car's name and an animated top-down drawing of it (body style and doors from the VIN, paint color you pick), with headlights glowing and doors opening during tests. Below it: health card, quick actions, a status row per system, and a flashlight button.
-- **Garage**: every car you've connected to or added by VIN, each with its own details, color, tests, body signals, maintenance and history. Tap the car name on Home to switch.
-- **Live view and body data**: set up signals from your car's body computer once (the Watch tool highlights the byte and bit that change when you open a door or flip a switch), and the drawing mirrors the real car: lights, high beams, fog, brake, reverse, turn signals and hazards blinking at your car's measured rate, dome light, doors, trunk, hood, windows, sunroof, locks, wipers, horn, garage door button, burned-out bulbs and engine running.
-- **Emissions inspection readiness** and **freeze frame** snapshots on the Codes screen.
-- **Maintenance**: oil, filters and fluids by miles or months, with the odometer read from newer cars.
-- **Scan history**: every scan saved per car, shareable as a text report.
-- **Recall alerts**: a daily background check for new recalls on every car in your garage, with a phone notification that opens the recall.
-- **Returning-code alerts**: if a code you cleared comes back, you get a notification and a red card on Home and Codes.
-- **Trips & MPG**: live and average MPG, distance, time, fuel used and cost, with a saved trip log per car.
-- **Home screen widget**: your car in its color, latest health result, recall count and mileage.
-- **Vehicle history**: one tap copies your VIN and opens Carfax, AutoCheck, NICB VINCheck, NMVTIS or NHTSA's VIN recall check.
-- **Vehicle & recalls**: details decoded from the VIN by NHTSA, paint color, manual VIN entry, open safety recalls linking to nhtsa.gov, and **Control your car**: a button for each light, door, window and more that sends that part's real command (from its active test) and animates the drawing. Parts without a command show + and open a pre-filled form to add one.
-- **Related for your car**: tap Look up on any code, or Related on any amber or red result, for recalls on the same system plus web, video, owner-forum and service-bulletin searches for your exact year, make and model.
-- **Code library**: 2,066 standard code definitions built in, so they work offline.
-- **About & settings**: version and build date, System / Light / Dark appearance, color legend, privacy, safety and credits.
-- **Health check**: one tap, about 20 seconds at warm idle. Judges battery and charging, cooling, fuel trims (per bank, and whether both banks agree), oxygen sensors and catalytic converter, idle quality, vacuum, timing and codes. Every amber or red result explains what it means and lists the likely causes, most common first.
+### Diagnose
+- **Full system scan**: one tap knocks on every address on the car's network and reads every computer that answers (engine, ABS, airbags, transmission, body, climate, cluster, steering...), including the Toyota/Lexus body network. Codes come with failure type (open circuit, short to ground...) and status (active, confirmed, pending, history). Clear per module or all at once.
+- **Trouble codes**: check engine light, stored, pending and permanent codes with descriptions (2,066 built in, work offline), freeze frame, emissions inspection readiness, and clearing with a warning first.
+- **Health check**: about 20 seconds at warm idle. Judges battery and charging, cooling, fuel trims, oxygen sensors and catalytic converter, idle, vacuum, timing and codes. Every amber or red result explains what it means and lists likely causes, most common first.
+- **Live data**: gauges that turn green, amber or red against normal ranges, and start reading as soon as you open them.
 
-- **Connect**: lists paired Classic adapters and scans for BLE ones, then auto-detects the car's protocol and reads the VIN.
-- **Codes**: check engine light status, stored, pending and permanent codes with descriptions, a web lookup per code, and clearing.
-- **All modules**: knocks on every address on the car's network and lists every computer that answers (ABS, airbags, transmission, body, climate, cluster, steering...). Reads each one's name and codes in UDS, KWP2000 or older Toyota format, with failure type (open circuit, short to ground...) and status (active, confirmed, pending, history). Clear per module or all at once. Optional deep scan of the Toyota/Lexus body network. Rename unknown modules once you know what they are.
-- **Live data**: arc gauges that turn green, amber or red against normal ranges, including oxygen and air-fuel sensors. Tap a gauge to see what it measures and what is normal.
-- **Tests**: your own actuator tests (fan, fuel pump, etc.) with a confirmation, an automatic time limit, and stop commands that always run.
-- **Console**: send any raw command and see the reply. Quick buttons, copyable log, and a guard that blocks commands that could reset or reprogram a module unless Expert mode is on.
+### Bidirectional
+- **Body live view**: the drawing on Home mirrors the real car: doors, trunk, hood, locks, brake lights, headlights, high beams, fog, turn signals and hazards (blinking at your car's rate), reverse, interior light, wipers.
+- **Set up automatically**: no codes needed. The app finds your car's body data, then asks you to open a door or press the brake and finds the matching signal itself.
+- **Active tests**: switch parts on to prove they work, with a confirmation, an automatic time limit, and stop commands that always run.
+- **Vehicle & recalls**: details decoded from the VIN, open safety recalls, and Control your car buttons for parts that have a test set up.
+- **Console**: raw commands with a safety guard (see below).
+
+### Service
+- **Maintenance**: oil, filters and fluids by miles or months, with the odometer read from newer cars.
+- **Trips & MPG**: live and average MPG, distance, fuel used and cost, with a trip log per car.
+
+### Reports, alerts and settings
+- **Reports**: every scan saved per car and shareable as a text report.
+- **Garage**: every car you've connected to or added by VIN, each with its own data.
+- **Alerts**: daily recall check for every car in your garage, and a notification if a code you cleared comes back.
+- **Home screen widget**, **vehicle history** links (Carfax, AutoCheck, NICB, NMVTIS), **Related for your car** searches, and System / Light / Dark appearance.
+
+### Not included (yet)
+Professional scan tools also offer manufacturer service functions such as oil-service reset, electronic parking brake, steering angle and TPMS relearn, battery registration, ABS bleeding and injector coding, plus ready-made bidirectional tests for every car. Those use manufacturer-specific commands that aren't public, and a wrong one can damage the car, so they're added only for specific cars once the commands are confirmed.
 
 ## Reading the code
 
@@ -47,7 +66,7 @@ Every file starts with a "WHAT THIS FILE DOES" note, and every function has a pl
 3. **Build > Build App Bundle(s) / APK(s) > Build APK(s)**.
 4. The APK lands in `app/build/outputs/apk/debug/app-debug.apk`. Copy it to the phone and open it to install (allow "install unknown apps" for your file manager).
 
-Or let GitHub build it: every push runs the unit tests and builds the APK. Download it from the **Actions** tab (open the latest run, then **Artifacts**).
+Or let GitHub build it: every push runs the unit tests and builds the APK, and every build on `main` is published as a [Release](https://github.com/dannyspace21/Daniel-s-OB2-Scanner/releases) that the app offers as an in-app update.
 
 The code lives directly in this repository now, so edit and commit files here rather than uploading a zip.
 
@@ -103,7 +122,9 @@ Cheap ELM327 clones often handle basic codes and live data but fail on manufactu
 
 ## Internet
 
-The app uses the internet only to decode the VIN and fetch recalls from NHTSA (U.S. government, free, no account), and to open links you tap. Results are saved on the phone so they still show offline.
+The app uses the internet only to decode the VIN and fetch recalls from NHTSA (U.S. government, free, no account), to check this repository's public Releases page for updates, and to open links you tap. Nothing about you or your car is sent anywhere. Results are saved on the phone so they still show offline.
+
+Updates are downloaded only over https from GitHub, and the app checks the download is signed with its own key before opening Android's installer.
 
 ## Safety
 
